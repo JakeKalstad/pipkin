@@ -1,14 +1,14 @@
 
 .PHONY: all build install extension install-extension test clean
 
-APP := zipdeck
+APP := pipkin
 EXT_DIR := extension
-VSIX := zipdeck-vscodium-0.3.0.vsix
+VSIX := pipkin-vscodium-0.7.0.vsix
 
 all: install install-extension
 
 build:
-	go build -o $(APP) ./cmd/zipdeck
+	go build -o $(APP) ./cmd/pipkin
 
 install: build
 	sudo install -m 755 $(APP) /usr/local/bin/$(APP)

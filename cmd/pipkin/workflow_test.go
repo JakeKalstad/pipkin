@@ -65,7 +65,7 @@ func TestArchiveResponseAndUsage(t *testing.T) {
 			fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":150,\"output_tokens\":70,\"input_tokens_details\":{\"cached_tokens\":12}},\"output\":[{\"type\":\"code_interpreter_call\",\"container_id\":\"cntr-1\"}]}}\n\n")
 			fmt.Fprint(w, "data: [DONE]\n\n")
 		case r.URL.Path == "/containers/cntr-1/files":
-			fmt.Fprint(w, `{"data":[{"id":"cfile-1","path":"/mnt/data/zipdeck-result.zip"}]}`)
+			fmt.Fprint(w, `{"data":[{"id":"cfile-1","path":"/mnt/data/pipkin-result.zip"}]}`)
 		case r.URL.Path == "/containers/cntr-1/files/cfile-1/content":
 			w.Write(resultBytes)
 		case r.URL.Path == "/files/file-123":
@@ -75,9 +75,9 @@ func TestArchiveResponseAndUsage(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	t.Setenv("ZIPDECK_FAKE_KEY", "test")
+	t.Setenv("PIPKIN_FAKE_KEY", "test")
 	job := WorkflowJob{}
-	e := openAIArchive(context.Background(), Config{APIKeyEnv: "ZIPDECK_FAKE_KEY", Model: "test-model", BaseURL: srv.URL}, input, output, "fix it", &job)
+	e := openAIArchive(context.Background(), Config{APIKeyEnv: "PIPKIN_FAKE_KEY", Model: "test-model", BaseURL: srv.URL}, input, output, "fix it", &job)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -93,7 +93,7 @@ func TestArchiveResponseAndUsage(t *testing.T) {
 }
 func TestReviewApplyAndConflict(t *testing.T) {
 	root := t.TempDir()
-	dir := filepath.Join(root, ".zipdeck", "jobs", "job-1")
+	dir := filepath.Join(root, ".pipkin", "jobs", "job-1")
 	if e := os.MkdirAll(dir, 0700); e != nil {
 		t.Fatal(e)
 	}
@@ -139,5 +139,38 @@ func TestStrictZIPRejectsSymlinkAndTraversal(t *testing.T) {
 	zipFixture(t, bad, map[string]string{"../outside": "bad"})
 	if e := validateZipStrict(bad); e == nil {
 		t.Fatal("accepted traversal")
+	}
+}
+
+func TestReviewCurrentWorkspaceDifferences(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "job-1")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	zipFixture(t, filepath.Join(dir, "input.zip"), map[string]string{"same.go": "archive", "changed.go": "old"})
+	zipFixture(t, filepath.Join(dir, "result.zip"), map[string]string{"same.go": "archive", "changed.go": "new"})
+	os.WriteFile(filepath.Join(root, "same.go"), []byte("local edit"), 0600)
+	os.WriteFile(filepath.Join(root, "changed.go"), []byte("old"), 0600)
+	hashes, _ := zipChecksums(filepath.Join(dir, "input.zip"))
+	if err := saveJob(dir, WorkflowJob{Root: root, Status: "completed", Files: hashes}); err != nil {
+		t.Fatal(err)
+	}
+	review, err := workflowReview(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(review.Files) != 2 {
+		t.Fatalf("expected 2 file differences got %+v", review.Files)
+	}
+	m := map[string]ReviewFile{}
+	for _, f := range review.Files {
+		m[f.Path] = f
+	}
+	if m["same.go"].Status != "workspace_only" || m["same.go"].WorkspaceStatus != "changed" {
+		t.Fatalf("unexpected local-only diff: %+v", m["same.go"])
+	}
+	if m["changed.go"].WorkspaceStatus != "unchanged_since_submission" {
+		t.Fatalf("unexpected current status: %+v", m["changed.go"])
 	}
 }

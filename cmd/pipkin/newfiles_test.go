@@ -15,10 +15,10 @@ import (
 
 func TestLegacyLLMAddsFileToArchive(t *testing.T) {
 	root := t.TempDir()
-	os.MkdirAll(filepath.Join(root, "cmd", "zipdeck"), 0755)
-	os.WriteFile(filepath.Join(root, "cmd", "zipdeck", "main.go"), []byte("package main\n"), 0644)
-	os.WriteFile(filepath.Join(root, "cmd", "zipdeck", "private.go"), []byte("private"), 0644)
-	files := []*Node{{rel: "cmd/zipdeck/main.go"}}
+	os.MkdirAll(filepath.Join(root, "cmd", "pipkin"), 0755)
+	os.WriteFile(filepath.Join(root, "cmd", "pipkin", "main.go"), []byte("package main\n"), 0644)
+	os.WriteFile(filepath.Join(root, "cmd", "pipkin", "private.go"), []byte("private"), 0644)
+	files := []*Node{{rel: "cmd/pipkin/main.go"}}
 	input := filepath.Join(t.TempDir(), "input.zip")
 	if err := writeZip(root, files, input); err != nil {
 		t.Fatal(err)
@@ -29,19 +29,19 @@ func TestLegacyLLMAddsFileToArchive(t *testing.T) {
 			fmt.Fprintf(w, `{"choices":[{"message":{"content":%q}}]}`, string(payload))
 		}))
 	}
-	t.Setenv("ZIPDECK_TEST_KEY", "dummy")
+	t.Setenv("PIPKIN_TEST_KEY", "dummy")
 	cases := []struct {
 		name    string
 		changes []Change
 		wantErr bool
 		wantNew bool
 	}{
-		{"add sibling", []Change{{Path: "cmd/zipdeck/api.go", Content: "package main\n"}}, false, true},
-		{"add nested", []Change{{Path: "cmd/zipdeck/new/handler.go", Content: "package main\n"}}, false, true},
-		{"modify unselected", []Change{{Path: "cmd/zipdeck/private.go", Content: "oops"}}, true, false},
+		{"add sibling", []Change{{Path: "cmd/pipkin/api.go", Content: "package main\n"}}, false, true},
+		{"add nested", []Change{{Path: "cmd/pipkin/new/handler.go", Content: "package main\n"}}, false, true},
+		{"modify unselected", []Change{{Path: "cmd/pipkin/private.go", Content: "oops"}}, true, false},
 		{"add unrelated", []Change{{Path: "another/file.go", Content: "oops"}}, true, false},
-		{"add ignored", []Change{{Path: "cmd/zipdeck/.env", Content: "secret"}}, true, false},
-		{"delete not supplied", []Change{{Path: "cmd/zipdeck/api.go", Delete: true}}, true, false},
+		{"add ignored", []Change{{Path: "cmd/pipkin/.env", Content: "secret"}}, true, false},
+		{"delete not supplied", []Change{{Path: "cmd/pipkin/api.go", Delete: true}}, true, false},
 		{"traversal", []Change{{Path: "../oops.go", Content: "no"}}, true, false},
 	}
 	for _, tc := range cases {
@@ -49,7 +49,7 @@ func TestLegacyLLMAddsFileToArchive(t *testing.T) {
 			srv := makeServer(tc.changes)
 			defer srv.Close()
 			output := filepath.Join(t.TempDir(), "out.zip")
-			cfg := Config{BaseURL: srv.URL, Model: "test", APIKeyEnv: "ZIPDECK_TEST_KEY", MaxContextBytes: 100000}
+			cfg := Config{BaseURL: srv.URL, Model: "test", APIKeyEnv: "PIPKIN_TEST_KEY", MaxContextBytes: 100000}
 			err := sendOpenAI(context.Background(), cfg, root, files, input, output, "test")
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("got err %v wantErr %v", err, tc.wantErr)

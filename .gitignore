@@ -1,3 +1,7 @@
-./zipdeck
-.config.config/zipdeck/config.json
 .env*
+
+# Compiled artifacts and local deliveries
+/pipkin
+*.vsix
+.pipkin/
+.confiure/pipkin/config.json

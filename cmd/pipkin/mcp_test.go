@@ -10,15 +10,15 @@ import (
 )
 
 func TestOutputDirectory(t *testing.T) {
-	t.Setenv("ZIPDECK_OUTPUT_DIR", t.TempDir())
-	if outputDirectory() != os.Getenv("ZIPDECK_OUTPUT_DIR") {
+	t.Setenv("PIPKIN_OUTPUT_DIR", t.TempDir())
+	if outputDirectory() != os.Getenv("PIPKIN_OUTPUT_DIR") {
 		t.Fatal("output override ignored")
 	}
 }
 func TestMCPHandshakeAndPack(t *testing.T) {
 	root := t.TempDir()
 	dest := t.TempDir()
-	t.Setenv("ZIPDECK_OUTPUT_DIR", dest)
+	t.Setenv("PIPKIN_OUTPUT_DIR", dest)
 	if err := os.WriteFile(filepath.Join(root, "hello.go"), []byte("package hello"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func TestMCPHandshakeAndPack(t *testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}`,
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
-		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"zipdeck_pack","arguments":{"root":` + string(mustJSON(root)) + `,"paths":["hello.go"]}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"pipkin_pack","arguments":{"root":` + string(mustJSON(root)) + `,"paths":["hello.go"]}}}`,
 	}, "\n") + "\n"
 	var out bytes.Buffer
 	if err := serveMCP(strings.NewReader(input), &out); err != nil {
@@ -63,8 +63,8 @@ func TestMCPHandshakeAndPack(t *testing.T) {
 	}
 }
 func TestMCPApplyIsOptIn(t *testing.T) {
-	t.Setenv("ZIPDECK_MCP_ALLOW_APPLY", "")
-	_, err := mcpCallTool(mcpCall{Name: "zipdeck_apply", Arguments: []byte(`{"job":"/tmp/example","file":"hello.go"}`)})
+	t.Setenv("PIPKIN_MCP_ALLOW_APPLY", "")
+	_, err := mcpCallTool(mcpCall{Name: "pipkin_apply", Arguments: []byte(`{"job":"/tmp/example","file":"hello.go"}`)})
 	if err == nil || !strings.Contains(err.Error(), "disabled") {
 		t.Fatalf("expected disabled apply: %v", err)
 	}

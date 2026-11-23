@@ -22,12 +22,15 @@ import (
 )
 
 type Config struct {
-	Provider        string `json:"provider"` // openai or multipart
-	BaseURL         string `json:"base_url"` // OpenAI-compatible API base URL, e.g. https://api.openai.com/v1
-	Model           string `json:"model"`
-	APIKeyEnv       string `json:"api_key_env"`
-	Endpoint        string `json:"endpoint"` // multipart POST endpoint
-	MaxContextBytes int    `json:"max_context_bytes"`
+	Provider             string `json:"provider"` // openai or multipart
+	BaseURL              string `json:"base_url"` // OpenAI-compatible API base URL, e.g. https://api.openai.com/v1
+	Model                string `json:"model"`
+	APIKeyEnv            string `json:"api_key_env"`
+	Endpoint             string `json:"endpoint"` // multipart POST endpoint
+	MaxContextBytes      int    `json:"max_context_bytes"`
+	LangfuseURL          string `json:"langfuse_url,omitempty"`
+	LangfusePublicKeyEnv string `json:"langfuse_public_key_env,omitempty"`
+	LangfuseSecretKeyEnv string `json:"langfuse_secret_key_env,omitempty"`
 }
 type Node struct {
 	name, rel                        string
@@ -43,19 +46,24 @@ type App struct {
 	status, prompt string
 	editing, busy  bool
 	cfg            Config
+	spinnerFrame   int
+	spinnerMessage string
+	recentAt       time.Time
+	cachedArchives []recentArtifact
+	cachedJobs     []recentArtifact
 }
 
-var ignoreDirs = map[string]bool{".git": true, ".zipdeck": true, ".venv": true, "venv": true, "env": true, "node_modules": true, "target": true, "__pycache__": true, ".pytest_cache": true, ".mypy_cache": true, ".ruff_cache": true, ".tox": true, ".idea": true, ".vscode": true, "_build": true, "deps": true, ".elixir_ls": true, ".next": true, ".nuxt": true, ".svelte-kit": true, ".turbo": true, "coverage": true, "vendor": true, "dist": true, "build": true, "tmp": true, "temp": true, ".cache": true}
+var ignoreDirs = map[string]bool{".git": true, ".pipkin": true, ".venv": true, "venv": true, "env": true, "node_modules": true, "target": true, "__pycache__": true, ".pytest_cache": true, ".mypy_cache": true, ".ruff_cache": true, ".tox": true, ".idea": true, ".vscode": true, "_build": true, "deps": true, ".elixir_ls": true, ".next": true, ".nuxt": true, ".svelte-kit": true, ".turbo": true, "coverage": true, "vendor": true, "dist": true, "build": true, "tmp": true, "temp": true, ".cache": true}
 var ignoreFiles = map[string]bool{".env": true, ".DS_Store": true, "Thumbs.db": true}
 
 func ignored(name string, dir bool) bool {
 	if dir {
 		return ignoreDirs[name]
 	}
-	if ignoreFiles[name] || strings.HasPrefix(name, ".env.") {
+	if name == "pipkin" || ignoreFiles[name] || strings.HasPrefix(name, ".env.") {
 		return true
 	}
-	for _, s := range []string{".pyc", ".log", ".zip", ".tar", ".tgz", ".pem", ".key"} {
+	for _, s := range []string{".pyc", ".log", ".zip", ".tar", ".tgz", ".pem", ".key", ".vsix"} {
 		if strings.HasSuffix(strings.ToLower(name), s) {
 			return true
 		}
@@ -136,7 +144,10 @@ func (a *App) outputPath(suffix string) string {
 }
 func configPath() string {
 	h, _ := os.UserHomeDir()
-	return filepath.Join(h, ".config", "zipdeck", "config.json")
+	if p := strings.TrimSpace(os.Getenv("PIPKIN_CONFIG")); p != "" {
+		return p
+	}
+	return filepath.Join(h, ".config", "pipkin", "config.json")
 }
 func loadConfig() Config {
 	c := Config{Provider: "openai", BaseURL: "https://api.openai.com/v1", Model: "gpt-4.1-mini", APIKeyEnv: "OPENAI_API_KEY", MaxContextBytes: 160000}
@@ -222,6 +233,9 @@ func readKey(r *bufio.Reader) string {
 	if b == 13 || b == 10 {
 		return "enter"
 	}
+	if b == 9 {
+		return "tab"
+	}
 	if b == '\x1b' {
 		next, _ := r.ReadByte()
 		if next != '[' {
@@ -285,65 +299,6 @@ func depth(n *Node) int {
 	}
 	return d
 }
-func (a *App) render() {
-	h, w := size()
-	rows := h - 8
-	if rows < 3 {
-		rows = 3
-	}
-	if a.cursor < a.offset {
-		a.offset = a.cursor
-	}
-	if a.cursor >= a.offset+rows {
-		a.offset = a.cursor - rows + 1
-	}
-	var b strings.Builder
-	b.WriteString("\x1b[2J\x1b[H")
-	b.WriteString("\x1b[1m ZIPDECK \x1b[0m " + trunc(a.cwd, w-15) + "\r\n")
-	b.WriteString(" ↑↓ move   ←→ fold/open   space toggle   a all   n none   z zip   p LLM   q quit\r\n")
-	b.WriteString(strings.Repeat("─", min(w, 100)) + "\r\n")
-	for i := a.offset; i < len(a.visible) && i < a.offset+rows; i++ {
-		n := a.visible[i]
-		mark := "[ ]"
-		if n.selected {
-			mark = "[x]"
-		}
-		fold := "  "
-		if n.dir {
-			fold = "▸ "
-			if n.expanded {
-				fold = "▾ "
-			}
-		}
-		prefix := "  "
-		if i == a.cursor {
-			prefix = "\x1b[7m> "
-		}
-		label := strings.Repeat("  ", min(depth(n), 25)) + fold + mark + " " + n.name
-		if n.ignored {
-			label += " (ignored)"
-		}
-		b.WriteString(prefix + trunc(label, w-3))
-		if i == a.cursor {
-			b.WriteString("\x1b[0m")
-		}
-		b.WriteString("\r\n")
-	}
-	for i := len(a.visible) - a.offset; i < rows; i++ {
-		if i >= 0 {
-			b.WriteString("\r\n")
-		}
-	}
-	files, _ := a.selectedFiles()
-	b.WriteString(strings.Repeat("─", min(w, 100)) + "\r\n")
-	b.WriteString(fmt.Sprintf(" Selected: %d files  |  %s\r\n", len(files), trunc(a.status, w-28)))
-	if a.editing {
-		b.WriteString(" Prompt (Enter to send, Esc cancel):\r\n > " + trunc(a.prompt, w-4) + "\r\n")
-	} else {
-		b.WriteString(" ZIP: " + trunc(a.outputPath(""), w-7) + "\r\n")
-	}
-	os.Stdout.WriteString(b.String())
-}
 func (a *App) makeZip() (string, error) {
 	files, e := a.selectedFiles()
 	if e != nil {
@@ -359,58 +314,15 @@ func (a *App) makeZip() (string, error) {
 	return dest, writeZip(a.cwd, files, dest)
 }
 func (a *App) submit(prompt string) error {
-	files, _ := a.selectedFiles()
-	if len(files) == 0 {
-		return errors.New("nothing selected")
+	files, err := a.selectedFiles()
+	if err != nil {
+		return err
 	}
-	if strings.TrimSpace(prompt) == "" {
-		return errors.New("prompt required")
-	}
-	input := a.outputPath("")
-	if e := os.MkdirAll(filepath.Dir(input), 0700); e != nil {
-		return e
-	}
-	if e := writeZip(a.cwd, files, input); e != nil {
-		return e
-	}
-	output := a.outputPath("-llm")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	switch a.cfg.Provider {
-	case "multipart":
-		return sendMultipart(ctx, a.cfg, input, output, prompt)
-	case "openai":
-		return sendOpenAI(ctx, a.cfg, a.cwd, files, input, output, prompt)
-	case "openai-archive":
-		tmp, err := os.MkdirTemp("", "zipdeck-tui-")
-		if err != nil {
-			return err
-		}
-		defer os.RemoveAll(tmp)
-		manifest := filepath.Join(tmp, "files.json")
-		promptFile := filepath.Join(tmp, "prompt.txt")
-		paths := make([]string, 0, len(files))
-		for _, f := range files {
-			paths = append(paths, f.rel)
-		}
-		b, err := json.Marshal(paths)
-		if err != nil {
-			return err
-		}
-		if err = os.WriteFile(manifest, b, 0600); err != nil {
-			return err
-		}
-		if err = os.WriteFile(promptFile, []byte(prompt), 0600); err != nil {
-			return err
-		}
-		return workflowSend(a.cwd, manifest, promptFile)
-	default:
-		return fmt.Errorf("unsupported provider %q", a.cfg.Provider)
-	}
+	return workflowSendFiles(a.cwd, files, prompt)
 }
 func sendMultipart(ctx context.Context, cfg Config, input, output, prompt string) error {
 	if cfg.Endpoint == "" {
-		return errors.New("configure endpoint in ~/.config/zipdeck/config.json")
+		return errors.New("configure endpoint in ~/.config/pipkin/config.json")
 	}
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
@@ -684,7 +596,7 @@ func validateNewContextFile(root, path string, included map[string]bool) error {
 	}
 	parts := strings.Split(path, "/")
 	for i, part := range parts {
-		if ignored(part, i < len(parts)-1) || part == ".zipdeck" || part == ".git" {
+		if ignored(part, i < len(parts)-1) || part == ".pipkin" || part == ".git" {
 			return fmt.Errorf("LLM attempted to create an ignored or sensitive file: %s", path)
 		}
 		current := filepath.Join(root, filepath.FromSlash(strings.Join(parts[:i+1], "/")))
@@ -807,7 +719,7 @@ func runCLI(root, manifest, output, promptFile string, doLLM bool) error {
 		if strings.TrimSpace(string(prompt)) == "" {
 			return errors.New("prompt must not be empty")
 		}
-		tmp, err := os.CreateTemp("", "zipdeck-input-*.zip")
+		tmp, err := os.CreateTemp("", "pipkin-input-*.zip")
 		if err != nil {
 			return err
 		}
@@ -841,7 +753,12 @@ func runCLI(root, manifest, output, promptFile string, doLLM bool) error {
 }
 
 func main() {
-	mcpMode := flag.Bool("mcp", false, "start Zipdeck MCP stdio server for OpenCode/Hermes")
+	if err := loadEnvironment(); err != nil {
+		fmt.Fprintln(os.Stderr, "Pipkin environment:", err)
+		os.Exit(1)
+	}
+	mcpMode := flag.Bool("mcp", false, "start Pipkin MCP stdio server for OpenCode/Hermes")
+	webMode := flag.Bool("web", false, "serve local web review UI (requires LISTEN_URL)")
 	zipMode := flag.Bool("zip", false, "create ZIP without a TUI")
 	workflowMode := flag.Bool("workflow", false, "submit ZIP to provider, save session and stream JSON events")
 	reviewJob := flag.String("review", "", "print JSON change review for saved job")
@@ -853,6 +770,20 @@ func main() {
 	output := flag.String("output", "", "destination ZIP path")
 	promptFile := flag.String("prompt-file", "", "prompt text file (required for --llm)")
 	flag.Parse()
+	if *webMode {
+		if err := serveWebFromEnv(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if addr := os.Getenv("LISTEN_URL"); addr != "" && !*mcpMode && !*zipMode && !*workflowMode && *reviewJob == "" && *gitDiffJob == "" && *applyJob == "" && !*llmMode {
+		go func() {
+			if err := serveWeb(addr); err != nil {
+				fmt.Fprintln(os.Stderr, "Pipkin web:", err)
+			}
+		}()
+	}
 	if *mcpMode {
 		if err := serveMCP(os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -924,7 +855,7 @@ func main() {
 			os.Exit(2)
 		}
 		if err := runCLI(cwd, *manifest, *output, *promptFile, *llmMode); err != nil {
-			fmt.Fprintln(os.Stderr, "zipdeck:", err)
+			fmt.Fprintln(os.Stderr, "pipkin:", err)
 			os.Exit(1)
 		}
 		return
@@ -934,7 +865,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	a := &App{root: root, cwd: cwd, cfg: loadConfig(), status: "ready"}
+	a := &App{root: root, cwd: cwd, cfg: loadConfig(), status: "Ready for your next delivery"}
 	a.refresh()
 	// Linux/macOS terminal mode via stty. No third-party dependencies.
 	old, e := stty("-g")
@@ -960,16 +891,11 @@ func main() {
 				a.status = "cancelled"
 			case "enter":
 				a.editing = false
-				fmt.Print("\x1b[2J\x1b[HSubmitting to model...\r\n")
-				e := a.submit(a.prompt)
+				e := a.submitWithSpinner(a.prompt)
 				if e != nil {
 					a.status = "LLM error: " + e.Error()
 				} else {
-					if a.cfg.Provider == "openai-archive" {
-						a.status = "Saved workflow in " + filepath.Join(outputDirectory(), "jobs", filepath.Base(a.cwd))
-					} else {
-						a.status = "Saved: " + a.outputPath("-llm")
-					}
+					a.status = "Delivery saved — press r to review"
 				}
 			case "\x7f", "\b":
 				if len(a.prompt) > 0 {
@@ -1035,6 +961,19 @@ func main() {
 				a.status = "ZIP error: " + e.Error()
 			} else {
 				a.status = "Saved: " + path
+			}
+		case "r":
+			if e := a.reviewTUI(reader); e != nil {
+				a.status = "Review: " + e.Error()
+			}
+		case "i":
+			in, out := a.outputPath(""), a.outputPath("-llm")
+			dir, e := importOutputPair(a.cwd, in, out)
+			if e != nil {
+				a.status = "Import: " + e.Error()
+			} else {
+				a.status = "Imported " + filepath.Base(dir) + " — press r to review"
+				a.recentAt = time.Time{}
 			}
 		case "L", "p":
 			a.prompt = ""

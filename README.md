@@ -1,162 +1,101 @@
-# Zipdeck
+# 🦦 Pipkin
 
-**Pick your files. ZIP them up. Let an LLM do its thing. Review the diff.**
+**Pick. Pack. Prompt. Inspect.**
 
-A lightweight Go CLI/TUI and VSCodium extension for making targeted code changes with LLMs, without handing an agent your entire repository.
+Meet **Pip**, a little parcel-carrying otter who takes *just the code you select* to an LLM and brings back a ZIP you can inspect before applying.
 
-## Why?
+No wandering agent. No mystery edits. Just deliberate, reviewable changes.
 
-I use tools like OpenCode constantly, but not every task needs a full-blown coding agent.
+## Build and install
 
-Sometimes I know exactly which files need changing. I just want to ZIP them up, send them to an LLM with a prompt, get the updated files back, and review the changes with Git.
-
-That workflow works great. Doing it manually a dozen times a day doesn't.
-
-**Enter Zipdeck.**
-
-## How it works
-
-```text
-Select files → ZIP → Prompt → LLM → Updated ZIP → Diff → Approve
+```sh
+make test
+make   # builds and installs pipkin, the VSCodium extension
 ```
 
-- **Selective context:** Choose files and directories through the TUI or VSCodium.
-- **ZIP-in / ZIP-out:** Send actual archives and receive modified ones.
-- **LLM integration:** OpenAI and configurable endpoints.
-- **Streaming:** Follow progress and track token usage.
-- **Git-friendly review:** See what changed and approve individual files.
-- **Safe by default:** Nothing touches your working tree until you approve it.
+## Configure
 
-## Getting started
-
-Build and install:
-
-```bash
-go test ./...
-go build -o zipdeck ./cmd/zipdeck
-sudo install -m 755 zipdeck /usr/local/bin/zipdeck
+```sh
+mkdir -p ~/.config/pipkin
+cp .env.example ~/.config/pipkin/.env
+chmod 600 ~/.config/pipkin/.env
+# Edit ~/.config/pipkin/.env to add your actual keys.
 ```
 
-Run the TUI:
+Pipkin loads `~/.config/pipkin/.env` and the current project's `.env` **without overriding exported variables**. To load a specific file instead, set `PIPKIN_ENV_FILE=/path/to/.env`. The `.env` parser supports plain `KEY=value`, optional `export`, single/double quotes, and comments (not shell evaluation).
 
-```bash
-OPENAI_API_KEY=sk-... zipdeck
-```
+Provider settings live in `~/.config/pipkin/config.json`. `PIPKIN_CONFIG` can select another config file.
 
-Install the VSCodium extension:
-
-```bash
-codium --install-extension zipdeck-vscodium-0.2.0.vsix --force
-```
-
-Configure `~/.config/zipdeck/config.json`:
+Example provider configuration (`~/.config/pipkin/config.json`):
 
 ```json
 {
   "provider": "openai-archive",
   "base_url": "https://api.openai.com/v1",
   "model": "gpt-5.2",
-  "api_key_env": "OPENAI_API_KEY"
+  "api_key_env": "OPENAI_API_KEY",
+  "langfuse_url": "http://127.0.0.1:3000",
+  "langfuse_public_key_env": "LANGFUSE_PUBLIC_KEY",
+  "langfuse_secret_key_env": "LANGFUSE_SECRET_KEY"
 }
 ```
 
-Set `OPENAI_API_KEY` in your environment before launching VSCodium. API usage is billed separately from ChatGPT.
+Never commit actual API keys. `.env` files are ignored; `.env.example` is safe to commit.
 
-## The idea
+## Optional web review
 
-I like agents. I also like knowing exactly what's happening in my codebase.
+Set in your `.env`:
 
-Zipdeck is about **gated, semi-autonomous development**: let AI handle targeted changes while keeping context selection, review, and approval in your hands.
-
-**Pick. ZIP. Prompt. Diff. Ship.**
-## Where output goes
-
-All generated archives and saved requests now default to:
-
-```text
-~/zipdeck/outputs/
-├── my-project-selected-1234.zip
-├── my-project.zip
-├── my-project-llm.zip
-└── jobs/
-    └── my-project/
-        └── job-XXXXXX/
-            ├── input.zip
-            ├── result.zip
-            ├── prompt.txt
-            ├── job.json
-            └── review/
+```dotenv
+LISTEN_URL=http://127.0.0.1:8787
 ```
 
-Override the directory for CLI, TUI and MCP with `ZIPDECK_OUTPUT_DIR=/some/path`.
-The VSCodium extension has a `zipdeck.outputDirectory` setting; it passes that path
-through to the Go subprocess. The project itself is not modified until approval.
-
-## OpenCode / Hermes / MCP
-
-Zipdeck includes a local stdio MCP server, **no extra Node/Python daemon required**:
+Start the standalone web viewer:
 
 ```sh
-zipdeck --mcp
+pipkin --web
 ```
 
-### OpenCode
+Visit <http://127.0.0.1:8787>. You can also run `pipkin` normally; it starts the web viewer alongside the interactive TUI when `LISTEN_URL` is set.
 
-Add the following to your OpenCode `opencode.json` or `opencode.jsonc` configuration:
+The Go `html/template` interface lists saved deliveries, displays submitted ZIP vs result and current workspace vs result side-by-side, and reports model usage. **It is read-only and intentionally bound to loopback** (no password or network exposure). To approve files, use the VSCodium review panel or `pipkin --apply`.
 
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "servers": {
-      "zipdeck": {
-        "type": "local",
-        "command": ["/usr/local/bin/zipdeck", "--mcp"],
-        "codemode": false
-      }
-    }
-  }
-}
-```
+## Existing workflow
 
-### Hermes Agent
-
-Install the same local MCP stdio server in Hermes:
+- Use the interactive TUI to check/uncheck files, then ZIP or send a prompt.
+- In VSCodium, right-click files → **Pipkin: Send Selected Files to LLM**.
+- Review a session in **Pipkin Deliveries**, inspect native diffs and approve individual files.
+- OpenCode and Hermes can use `pipkin --mcp` with the `pipkin_pack`, `pipkin_submit`, `pipkin_jobs`, `pipkin_review`, and `pipkin_apply` tools.
+- Archives and sessions default to `~/pipkin/outputs` (`/home/jake/pipkin/outputs` on your machine). Override using `PIPKIN_OUTPUT_DIR`.
 
 ```sh
-hermes mcp add zipdeck --command /usr/local/bin/zipdeck --args --mcp
-hermes mcp test zipdeck
+pipkin --workflow --files-from /tmp/files.json --prompt-file /tmp/prompt.txt .
+pipkin --review ~/pipkin/outputs/jobs/PROJECT/job-ID
+pipkin --git-diff ~/pipkin/outputs/jobs/PROJECT/job-ID
 ```
 
-If your Hermes version uses YAML configuration instead, register the same
-executable and `--mcp` argument as a stdio MCP server.
+**Pip's rule:** he delivers changes; *you* decide what gets committed.
 
-### MCP tools
+## Terminal interface
 
-- `zipdeck_pack` — ZIP explicitly chosen project-relative paths.
-- `zipdeck_submit` — ZIP chosen paths, send with a required prompt, save the returned ZIP and request history (requires a configured provider and API key).
-- `zipdeck_jobs` — list project sessions.
-- `zipdeck_review` — list changed files and safe local before/after snapshots.
-- `zipdeck_apply` — apply **one** reviewed file; **disabled by default in MCP**.
+On wide terminals, the file picker shares the screen with Pip, recent ZIPs, and saved requests. All LLM submissions—including the legacy text provider—are now recorded as **reviewable sessions**.
 
-Use absolute project roots. MCP clients supply selected file paths explicitly; Zipdeck
-never grants an agent access to the entire project implicitly. All MCP results go through
-the same archive validation and review logic as the standalone CLI.
+**File picker:** `space` select, `z` package, `p` prompt and send, `r` review completed deliveries, `i` import an existing `<project>.zip` + `<project>-llm.zip` pair from the output directory, `q` quit.
 
-To enable MCP application deliberately, start the server with
-`ZIPDECK_MCP_ALLOW_APPLY=1`; otherwise use VSCodium or CLI approval:
+**Review screen:** press `r`, select a delivery with the arrow keys and Enter. The left pane lists changed files; the right pane shows the actual unified Git diff (green additions, red deletions). On smaller terminals, press Enter to open a full-screen diff.
 
-```sh
-zipdeck --review ~/zipdeck/outputs/jobs/my-project/job-XXXXXX
-zipdeck --git-diff ~/zipdeck/outputs/jobs/my-project/job-XXXXXX
-zipdeck --apply ~/zipdeck/outputs/jobs/my-project/job-XXXXXX --apply-file src/example.go
-```
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Select a changed file |
+| `Tab` | Switch between file navigation and diff scrolling |
+| `o` | **OK** the selected change |
+| `x` | Reject the selected change |
+| `u` | Clear that decision |
+| `A` / `X` | Approve all / reject all |
+| `v` | Toggle submitted ZIP vs result / current workspace vs result |
+| `c` | **Copy** approved changes into your project (requires every file to be decided and a separate `Y` confirmation) |
+| `b` / `q` | Back / exit the reviewer |
 
-MCP integration provides **tools to an agent**; it does not itself run OpenCode or
-Hermes as the LLM backend. OpenAI archive and custom multipart ZIP transports remain
-the supported automated ZIP-in / ZIP-out providers. Other agents can invoke these
-MCP tools to prepare context and review artifacts.
+Decisions are stored under each delivery as `decisions.json` and survive closing Pipkin. Rejected files are never copied. Before copying, Pipkin checks **all** destination paths and original SHA-256 hashes; a conflicting local edit stops the entire copy. Previous file contents are backed up inside the session. Copying does not commit or stage changes—review with `git diff` and run your tests before committing.
 
-**Security:** MCP `zipdeck_submit` sends selected files to an external provider, which
-may incur charges. Do not expose the local MCP server to untrusted clients. The
-review and apply stages remain separate, with checksum conflict protection.
+The web viewer and VSCodium diff viewer continue to work as before.
