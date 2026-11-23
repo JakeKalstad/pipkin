@@ -1,2 +1,3 @@
 ./zipdeck
-.config
+.config.config/zipdeck/config.json
+.env*
