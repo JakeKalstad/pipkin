@@ -1,91 +1,162 @@
 # Zipdeck
 
-A tiny, dependency-free Go terminal application to select project files, zip them, and optionally request LLM edits that arrive as a **separate** local ZIP. Designed for Linux/macOS terminal sessions (uses `stty`).
+**Pick your files. ZIP them up. Let an LLM do its thing. Review the diff.**
 
-## Install
+A lightweight Go CLI/TUI and VSCodium extension for making targeted code changes with LLMs, without handing an agent your entire repository.
+
+## Why?
+
+I use tools like OpenCode constantly, but not every task needs a full-blown coding agent.
+
+Sometimes I know exactly which files need changing. I just want to ZIP them up, send them to an LLM with a prompt, get the updated files back, and review the changes with Git.
+
+That workflow works great. Doing it manually a dozen times a day doesn't.
+
+**Enter Zipdeck.**
+
+## How it works
+
+```text
+Select files → ZIP → Prompt → LLM → Updated ZIP → Diff → Approve
+```
+
+- **Selective context:** Choose files and directories through the TUI or VSCodium.
+- **ZIP-in / ZIP-out:** Send actual archives and receive modified ones.
+- **LLM integration:** OpenAI and configurable endpoints.
+- **Streaming:** Follow progress and track token usage.
+- **Git-friendly review:** See what changed and approve individual files.
+- **Safe by default:** Nothing touches your working tree until you approve it.
+
+## Getting started
+
+Build and install:
 
 ```bash
+go test ./...
 go build -o zipdeck ./cmd/zipdeck
 sudo install -m 755 zipdeck /usr/local/bin/zipdeck
 ```
 
-Run `zipdeck` in the project directory, or `zipdeck /path/to/project`.
+Run the TUI:
 
-## Controls
+```bash
+OPENAI_API_KEY=sk-... zipdeck
+```
 
-| Key | Action |
-|---|---|
-| Up/Down or j/k | Navigate |
-| Right/Left or l/h | Expand/collapse directory |
-| Space | Check/uncheck file or entire directory |
-| a / n | Select all / select none |
-| z | Write `<project>.zip` beside the project |
-| p or Shift+L | Enter a prompt and submit to configured LLM |
-| Enter | Submit prompt |
-| Ctrl+G | Cancel prompt |
-| q | Quit |
+Install the VSCodium extension:
 
-Ignored build/dependency directories are initially unchecked and not traversed until expanded or toggled (for speed). Common secret/environment files are also unchecked. **Review selections before submission**: this is not a security scanner; unusual credentials or sensitive files may remain selected.
+```bash
+codium --install-extension zipdeck-vscodium-0.2.0.vsix --force
+```
 
-## Configure your LLM
-
-Create `~/.config/zipdeck/config.json`.
-
-### OpenAI-compatible chat completions (default)
+Configure `~/.config/zipdeck/config.json`:
 
 ```json
 {
-  "provider": "openai",
+  "provider": "openai-archive",
   "base_url": "https://api.openai.com/v1",
-  "model": "gpt-4.1-mini",
-  "api_key_env": "OPENAI_API_KEY",
-  "max_context_bytes": 160000
+  "model": "gpt-5.2",
+  "api_key_env": "OPENAI_API_KEY"
 }
 ```
 
-Then `export OPENAI_API_KEY='...'` before running. Other OpenAI-compatible servers may work if they expose `/chat/completions` and return JSON content. Configure your own base URL, model, and key environment variable.
+Set `OPENAI_API_KEY` in your environment before launching VSCodium. API usage is billed separately from ChatGPT.
 
-**Important:** OpenAI-compatible chat completions **do not receive the binary ZIP**. Zipdeck sends the prompt and the contents of selected text files that fit its context budget. The model responds with JSON replacements/deletions, and Zipdeck packages them with the unchanged selected files into `<project>-llm.zip`. Files larger than 50 KB, binary files, and text files beyond the configured budget remain in the resulting ZIP unchanged. The model can edit only submitted text files. No code is executed, and the original source tree is untouched.
+## The idea
 
-### Multipart ZIP gateway (literal ZIP upload/download)
+I like agents. I also like knowing exactly what's happening in my codebase.
+
+Zipdeck is about **gated, semi-autonomous development**: let AI handle targeted changes while keeping context selection, review, and approval in your hands.
+
+**Pick. ZIP. Prompt. Diff. Ship.**
+## Where output goes
+
+All generated archives and saved requests now default to:
+
+```text
+~/zipdeck/outputs/
+├── my-project-selected-1234.zip
+├── my-project.zip
+├── my-project-llm.zip
+└── jobs/
+    └── my-project/
+        └── job-XXXXXX/
+            ├── input.zip
+            ├── result.zip
+            ├── prompt.txt
+            ├── job.json
+            └── review/
+```
+
+Override the directory for CLI, TUI and MCP with `ZIPDECK_OUTPUT_DIR=/some/path`.
+The VSCodium extension has a `zipdeck.outputDirectory` setting; it passes that path
+through to the Go subprocess. The project itself is not modified until approval.
+
+## OpenCode / Hermes / MCP
+
+Zipdeck includes a local stdio MCP server, **no extra Node/Python daemon required**:
+
+```sh
+zipdeck --mcp
+```
+
+### OpenCode
+
+Add the following to your OpenCode `opencode.json` or `opencode.jsonc` configuration:
 
 ```json
 {
-  "provider": "multipart",
-  "endpoint": "https://your-llm-gateway.example/api/edit-zip",
-  "model": "your-model",
-  "api_key_env": "ZIPDECK_API_KEY"
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "zipdeck": {
+        "type": "local",
+        "command": ["/usr/local/bin/zipdeck", "--mcp"],
+        "codemode": false
+      }
+    }
+  }
 }
 ```
 
-This sends `multipart/form-data` fields `file` (binary ZIP), `prompt` (required), and `model`, optionally using `Authorization: Bearer $ZIPDECK_API_KEY`. The gateway **must return a ZIP body** on a 2xx response. Ordinary LLM APIs do not implement this protocol, so you need a gateway that does.
+### Hermes Agent
 
-## Output
+Install the same local MCP stdio server in Hermes:
 
-- `<project>.zip` — selected files
-- `<project>-llm.zip` — result from the model or multipart gateway
-
-Zipdeck never extracts a response into your project or automatically overwrites your source. Inspect or diff the returned ZIP before using it. The ZIP gateway response is structurally validated (including rejecting path traversal entries) but its contents are untrusted.
-
-## Limitations
-
-Minimal MVP; not a full file manager. No mouse support, long-running calls block interaction, no in-app diff, no streaming, and response changes may fail if the model doesn't obey the JSON contract. Includes no secret detector or explicit token/cost estimate. The project may have files that are too large for the context window.
-
-## Test
-
-```bash
-go test ./...
+```sh
+hermes mcp add zipdeck --command /usr/local/bin/zipdeck --args --mcp
+hermes mcp test zipdeck
 ```
 
-## VSCodium extension
+If your Hermes version uses YAML configuration instead, register the same
+executable and `--mcp` argument as a stdio MCP server.
 
-See [`extension/README.md`](extension/README.md). Install `zipdeck-vscodium.vsix` with `codium --install-extension zipdeck-vscodium.vsix` after installing the updated Zipdeck executable (`go build -o zipdeck ./cmd/zipdeck`). The extension supports right-click ZIPs of Explorer selections, ZIPs of open editor tabs, and sending highlighted code with a required prompt to the configured OpenAI-compatible endpoint. You can also send selected files with a prompt and receive a new ZIP.
+### MCP tools
 
-The CLI now supports:
+- `zipdeck_pack` — ZIP explicitly chosen project-relative paths.
+- `zipdeck_submit` — ZIP chosen paths, send with a required prompt, save the returned ZIP and request history (requires a configured provider and API key).
+- `zipdeck_jobs` — list project sessions.
+- `zipdeck_review` — list changed files and safe local before/after snapshots.
+- `zipdeck_apply` — apply **one** reviewed file; **disabled by default in MCP**.
 
-```bash
-zipdeck --zip --files-from paths.json --output selected.zip /path/to/project
-zipdeck --llm --files-from paths.json --prompt-file instructions.txt --output returned.zip /path/to/project
+Use absolute project roots. MCP clients supply selected file paths explicitly; Zipdeck
+never grants an agent access to the entire project implicitly. All MCP results go through
+the same archive validation and review logic as the standalone CLI.
+
+To enable MCP application deliberately, start the server with
+`ZIPDECK_MCP_ALLOW_APPLY=1`; otherwise use VSCodium or CLI approval:
+
+```sh
+zipdeck --review ~/zipdeck/outputs/jobs/my-project/job-XXXXXX
+zipdeck --git-diff ~/zipdeck/outputs/jobs/my-project/job-XXXXXX
+zipdeck --apply ~/zipdeck/outputs/jobs/my-project/job-XXXXXX --apply-file src/example.go
 ```
 
-`paths.json` is a JSON array of project-relative file/directory paths. Explicitly selected ignored paths are included; ignored children are skipped when recursing directories. No interactive TTY is required for these CLI modes.
+MCP integration provides **tools to an agent**; it does not itself run OpenCode or
+Hermes as the LLM backend. OpenAI archive and custom multipart ZIP transports remain
+the supported automated ZIP-in / ZIP-out providers. Other agents can invoke these
+MCP tools to prepare context and review artifacts.
+
+**Security:** MCP `zipdeck_submit` sends selected files to an external provider, which
+may incur charges. Do not expose the local MCP server to untrusted clients. The
+review and apply stages remain separate, with checksum conflict protection.

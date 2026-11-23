@@ -5,6 +5,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { relativePaths, filePath, stripTrailingSlash } = require('./helpers');
+const { showReview } = require('./review');
 
 const output = vscode.window.createOutputChannel('Zipdeck');
 function settings() { return vscode.workspace.getConfiguration('zipdeck'); }
@@ -16,14 +17,14 @@ function workspaceRoot(uri) {
   throw new Error('Select a file inside a local workspace.');
 }
 function uniqueOutput(root, kind) {
-  const dir = settings().get('outputDirectory') || path.dirname(root);
+  const dir = settings().get('outputDirectory') || path.join(os.homedir(), 'zipdeck', 'outputs');
   return path.resolve(dir, `${path.basename(root)}-${kind}-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`);
 }
 async function execZipdeck(args) {
   const executable = settings().get('executable') || 'zipdeck';
   output.appendLine(`$ ${executable} ${args.map(JSON.stringify).join(' ')}`);
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
+    const child = spawn(executable, args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ZIPDECK_OUTPUT_DIR: settings().get('outputDirectory') || path.join(os.homedir(), 'zipdeck', 'outputs') } });
     let stdout = '', stderr = '';
     child.stdout.on('data', b => { stdout += b; output.append(b.toString()); });
     child.stderr.on('data', b => { stderr += b; output.append(b.toString()); });
@@ -41,19 +42,41 @@ async function packagePaths(root, paths, mode, prompt) {
   try {
     await fs.mkdir(path.dirname(dest), { recursive: true });
     await fs.writeFile(manifest, JSON.stringify(relative));
-    const args = [mode === 'llm' ? '--llm' : '--zip', '--files-from', manifest, '--output', dest];
+    const args = [mode === 'llm' ? '--workflow' : '--zip', '--files-from', manifest];
+    if (mode !== 'llm') args.push('--output', dest);
     if (mode === 'llm') {
       if (!prompt || !prompt.trim()) throw new Error('Prompt is required.');
       await fs.writeFile(promptFile, prompt);
       args.push('--prompt-file', promptFile);
     }
     args.push(root);
-    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: mode === 'llm' ? 'Zipdeck: sending files to LLM' : 'Zipdeck: creating ZIP', cancellable: false }, () => execZipdeck(args));
+    if (mode === 'llm') { await runWorkflow(args, root); return; }
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Zipdeck: creating ZIP', cancellable: false }, () => execZipdeck(args));
     const choice = await vscode.window.showInformationMessage(`Zipdeck saved ${dest}`, 'Reveal in Files');
     if (choice === 'Reveal in Files') await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(dest));
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }
+}
+async function runWorkflow(args, root) {
+  const executable = settings().get('executable') || 'zipdeck';
+  let jobDir;
+  let usage;
+  await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Zipdeck: processing ZIP', cancellable: true }, (progress, token) => new Promise((resolve, reject) => {
+    const child = spawn(executable, args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ZIPDECK_OUTPUT_DIR: settings().get('outputDirectory') || path.join(os.homedir(), 'zipdeck', 'outputs') }, cwd: root });
+    let pending = '', stderr = '', cancelled = false;
+    token.onCancellationRequested(() => { cancelled = true; child.kill('SIGTERM'); });
+    child.stdout.on('data', chunk => { pending += chunk.toString(); let pos; while ((pos = pending.indexOf('\n')) >= 0) { const line = pending.slice(0, pos); pending = pending.slice(pos + 1); output.appendLine(line); try { const event = JSON.parse(line); if (event.type === 'job') jobDir = event.job; if (event.type === 'status') progress.report({ message: event.message }); if (event.type === 'usage') usage = event; if (event.type === 'error') stderr = event.message; } catch { } } });
+    child.stderr.on('data', chunk => { stderr += chunk.toString(); output.append(chunk.toString()); });
+    child.on('error', reject);
+    child.on('close', code => code === 0 ? resolve() : reject(new Error(cancelled ? 'Request cancelled' : stderr || `Zipdeck exited ${code}`)));
+  }));
+  if (!jobDir) throw new Error('Workflow completed without a saved job directory.');
+  const summary = usage ? ` — ${usage.input_tokens} input / ${usage.output_tokens} output tokens` : '';
+  output.appendLine(`Completed ${jobDir}${summary}`);
+  const choice = await vscode.window.showInformationMessage(`Zipdeck returned a ZIP${summary}`, 'Review changes', 'Reveal result');
+  if (choice === 'Review changes') await showReview(executable, jobDir, output);
+  if (choice === 'Reveal result') await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(path.join(jobDir, 'result.zip')));
 }
 function explorerPaths(uri, selectedUris) {
   const picked = Array.isArray(selectedUris) && selectedUris.length ? selectedUris : uri ? [uri] : [];
@@ -146,6 +169,15 @@ function activate(context) {
   register('zipdeck.sendSelectedFiles', (uri, selectedUris) => fromExplorer(uri, selectedUris, 'llm'));
   register('zipdeck.zipOpen', zipOpenEditors);
   register('zipdeck.askSelection', askSelection);
+  register('zipdeck.reviewLast', async () => {
+    const root = workspaceRoot(vscode.window.activeTextEditor?.document.uri || vscode.workspace.workspaceFolders?.[0]?.uri);
+    const folder = path.join(settings().get('outputDirectory') || path.join(os.homedir(), 'zipdeck', 'outputs'), 'jobs', path.basename(root));
+    const entries = await fs.readdir(folder, { withFileTypes: true });
+    const names = entries.filter(e => e.isDirectory()).map(e => e.name).sort().reverse();
+    if (!names.length) throw new Error('No Zipdeck sessions found.');
+    const chosen = await vscode.window.showQuickPick(names, { placeHolder: 'Choose a Zipdeck session to review' });
+    if (chosen) await showReview(settings().get('executable') || 'zipdeck', path.join(folder, chosen), output);
+  });
 }
 function deactivate() { output.dispose(); }
 module.exports = { activate, deactivate };
