@@ -76,3 +76,16 @@ Minimal MVP; not a full file manager. No mouse support, long-running calls block
 ```bash
 go test ./...
 ```
+
+## VSCodium extension
+
+See [`extension/README.md`](extension/README.md). Install `zipdeck-vscodium.vsix` with `codium --install-extension zipdeck-vscodium.vsix` after installing the updated Zipdeck executable (`go build -o zipdeck ./cmd/zipdeck`). The extension supports right-click ZIPs of Explorer selections, ZIPs of open editor tabs, and sending highlighted code with a required prompt to the configured OpenAI-compatible endpoint. You can also send selected files with a prompt and receive a new ZIP.
+
+The CLI now supports:
+
+```bash
+zipdeck --zip --files-from paths.json --output selected.zip /path/to/project
+zipdeck --llm --files-from paths.json --prompt-file instructions.txt --output returned.zip /path/to/project
+```
+
+`paths.json` is a JSON array of project-relative file/directory paths. Explicitly selected ignored paths are included; ignored children are skipped when recursing directories. No interactive TTY is required for these CLI modes.
