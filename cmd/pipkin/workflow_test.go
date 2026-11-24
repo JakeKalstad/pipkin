@@ -97,7 +97,7 @@ func TestReviewApplyAndConflict(t *testing.T) {
 	if e := os.MkdirAll(dir, 0700); e != nil {
 		t.Fatal(e)
 	}
-	if e := os.WriteFile(filepath.Join(root, "main.go"), []byte("old"), 0600); e != nil {
+	if e := os.WriteFile(filepath.Join(root, "main.go"), []byte("old"), 0755); e != nil {
 		t.Fatal(e)
 	}
 	input := filepath.Join(dir, "input.zip")
@@ -119,6 +119,16 @@ func TestReviewApplyAndConflict(t *testing.T) {
 	if len(review.Files) != 2 {
 		t.Fatalf("changes %v", review.Files)
 	}
+	target := filepath.Join(root, "main.go")
+	if err := os.WriteFile(target, []byte("local edit"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if e = workflowApply(dir, "main.go"); e == nil || !strings.Contains(e.Error(), "local changes detected") {
+		t.Fatalf("expected local edit conflict, got %v", e)
+	}
+	if err := os.WriteFile(target, []byte("old"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	if e = workflowApply(dir, "main.go"); e != nil {
 		t.Fatal(e)
 	}
@@ -126,8 +136,24 @@ func TestReviewApplyAndConflict(t *testing.T) {
 	if string(b) != "new" {
 		t.Fatalf("applied: %q", b)
 	}
-	if e = workflowApply(dir, "main.go"); e == nil || !strings.Contains(e.Error(), "changed since submission") {
-		t.Fatalf("expected conflict, got %v", e)
+	mode, err := os.Stat(filepath.Join(root, "main.go"))
+	if err != nil || mode.Mode().Perm() != 0755 {
+		t.Fatalf("executable mode was not preserved: %v (%v)", mode, err)
+	}
+	backups, err := filepath.Glob(filepath.Join(dir, "backups", "*", "main.go"))
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("expected one backup, got %v (%v)", backups, err)
+	}
+	original, err := os.ReadFile(backups[0])
+	if err != nil || string(original) != "old" {
+		t.Fatalf("backup contents: %q (%v)", original, err)
+	}
+	decisions, err := loadDecisions(dir)
+	if err != nil || !decisions.Applied["main.go"] || decisions.Applied["extra.go"] {
+		t.Fatalf("unexpected decisions after single-file apply: %+v (%v)", decisions, err)
+	}
+	if e = workflowApply(dir, "main.go"); e == nil || !strings.Contains(e.Error(), "already applied") {
+		t.Fatalf("expected duplicate apply to be rejected, got %v", e)
 	}
 	if e = workflowApply(dir, "extra.go"); e != nil {
 		t.Fatal(e)

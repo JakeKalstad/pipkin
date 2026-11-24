@@ -1020,80 +1020,25 @@ func workflowReview(dir string) (ReviewResult, error) {
 	return out, nil
 }
 func workflowApply(dir, path string) error {
-	review, e := workflowReview(dir)
-	if e != nil {
-		return e
+	review, err := workflowReview(dir)
+	if err != nil {
+		return err
 	}
-	var j WorkflowJob
-	b, e := os.ReadFile(filepath.Join(dir, "job.json"))
-	if e != nil {
-		return e
+	decisions, err := loadDecisions(dir)
+	if err != nil {
+		return err
 	}
-	if e = json.Unmarshal(b, &j); e != nil {
-		return e
-	}
-	for _, f := range review.Files {
-		if f.Path != path {
+	for _, file := range reviewableFiles(review) {
+		if file.Path != path {
 			continue
 		}
-		target := filepath.Join(j.Root, filepath.FromSlash(path))
-		if !strings.HasPrefix(target, j.Root+string(filepath.Separator)) {
-			return errors.New("outside workspace")
+		if decisions.Applied[path] {
+			return fmt.Errorf("file already applied: %s", path)
 		}
-		segments := strings.Split(filepath.FromSlash(path), string(filepath.Separator))
-		cursor := j.Root
-		for _, s := range segments {
-			cursor = filepath.Join(cursor, s)
-			fi, err := os.Lstat(cursor)
-			if err == nil && fi.Mode()&os.ModeSymlink != 0 {
-				return errors.New("symlink in target path")
-			}
-			if err != nil && !os.IsNotExist(err) {
-				return err
-			}
-		}
-		current, e := os.ReadFile(target)
-		if e != nil && !os.IsNotExist(e) {
-			return e
-		}
-		if f.Status != "added" {
-			if e != nil {
-				return fmt.Errorf("original file missing: %s", path)
-			}
-			h := sha256.Sum256(current)
-			if hex.EncodeToString(h[:]) != f.ExpectedSHA {
-				return errors.New("working copy changed since submission; refusing overwrite")
-			}
-		} else if e == nil {
-			return errors.New("file already exists; refusing overwrite")
-		}
-		if f.Status == "deleted" {
-			return os.Remove(target)
-		}
-		contents, e := os.ReadFile(f.After)
-		if e != nil {
-			return e
-		}
-		if e = os.MkdirAll(filepath.Dir(target), 0755); e != nil {
-			return e
-		}
-		tmp, e := os.CreateTemp(filepath.Dir(target), ".pipkin-apply-")
-		if e != nil {
-			return e
-		}
-		defer os.Remove(tmp.Name())
-		if _, e = tmp.Write(contents); e != nil {
-			tmp.Close()
-			return e
-		}
-		if e = tmp.Chmod(0644); e != nil {
-			tmp.Close()
-			return e
-		}
-		if e = tmp.Close(); e != nil {
-			return e
-		}
-		return os.Rename(tmp.Name(), target)
+		// An explicit single-file apply approves just that file.
+		decisions.Decisions[path] = decisionApproved
+		_, err := copyApprovedChanges(dir, []ReviewFile{file}, &decisions)
+		return err
 	}
 	return fmt.Errorf("file not in changed set: %q", path)
 }

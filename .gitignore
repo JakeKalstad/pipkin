@@ -1,4 +1,4 @@
-.env*
+.env
 
 # Compiled artifacts and local deliveries
 /pipkin

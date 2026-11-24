@@ -571,7 +571,10 @@ func copyApprovedChanges(dir string, files []ReviewFile, d *reviewDecisions) (in
 		if e == nil {
 			p.existed = true
 			p.original = old
-			fi, _ := os.Stat(target)
+			fi, err := os.Stat(target)
+			if err != nil {
+				return 0, err
+			}
 			p.mode = fi.Mode().Perm()
 		}
 		if e != nil && !errors.Is(e, os.ErrNotExist) {
@@ -608,6 +611,13 @@ func copyApprovedChanges(dir string, files []ReviewFile, d *reviewDecisions) (in
 	if err = os.MkdirAll(backupDir, 0700); err != nil {
 		return 0, err
 	}
+	defer func() {
+		for _, p := range plans {
+			if p.stage != "" {
+				_ = os.Remove(p.stage)
+			}
+		}
+	}()
 	// Prepare backups and staging before modifying any target.
 	for i := range plans {
 		p := &plans[i]
@@ -642,13 +652,7 @@ func copyApprovedChanges(dir string, files []ReviewFile, d *reviewDecisions) (in
 			}
 		}
 	}
-	defer func() {
-		for _, p := range plans {
-			if p.stage != "" {
-				_ = os.Remove(p.stage)
-			}
-		}
-	}()
+
 	applied := 0
 	for _, p := range plans {
 		if p.f.Status == "deleted" {
