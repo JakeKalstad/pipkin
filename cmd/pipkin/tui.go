@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -168,17 +170,27 @@ func (a *App) render() {
 	if a.cfg.supportsAgentic() {
 		shortcuts += "  P Agentic"
 	}
-	shortcuts += "  r Review  i Import  q Quit"
+	if len(a.cfg.ProviderProfiles) > 0 {
+		shortcuts += "  m Model"
+	}
+	shortcuts += "  g/G Git  H Hidden  r Review  i Import  q Quit"
 	if w < utf8.RuneCountInString(shortcuts) {
-		shortcuts = " Space select  z ZIP  p LLM"
+		shortcuts = " g/G Git  H Hidden  Space select  z ZIP  p LLM"
 		if a.cfg.supportsAgentic() {
-			shortcuts = " p LLM  P Agentic  Space select  z ZIP"
+			shortcuts = " g/G Git  H Hidden  p/P LLM  Space select  z ZIP"
+		}
+		if len(a.cfg.ProviderProfiles) > 0 {
+			shortcuts += "  m Model"
 		}
 		shortcuts += "  r Review  i Import  q Quit"
 	}
 	// The shortcut bar spans the terminal so the sidebar cannot clip it.
+	model := a.cfg.Provider + " / " + a.cfg.Model
+	if a.cfg.ProviderProfile != "" {
+		model = a.cfg.ProviderProfile + " · " + model
+	}
 	header := []string{
-		" PIPKIN  " + trunc(a.cwd, max(0, leftWidth-10)),
+		" PIPKIN  " + model + "  ·  " + a.cwd,
 		shortcuts,
 		strings.Repeat("─", max(0, leftWidth)),
 	}
@@ -277,6 +289,53 @@ func max(a, b int) int {
 	return b
 }
 
+func (a *App) chooseProvider(reader *bufio.Reader) {
+	names := make([]string, 0, len(a.cfg.ProviderProfiles))
+	for name := range a.cfg.ProviderProfiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		a.status = "Add provider profiles to config.json to switch models"
+		return
+	}
+	index, matched := slices.BinarySearch(names, a.cfg.ProviderProfile)
+	if !matched {
+		index = 0
+	}
+	for {
+		height, _ := size()
+		lines := []string{" PIPKIN / MODEL", " ↑↓ choose  Enter select  Esc back"}
+		start := max(0, index-max(1, height-3)+1)
+		for i := start; i < len(names) && len(lines) < height; i++ {
+			prefix := "  "
+			if i == index {
+				prefix = "> "
+			}
+			profile := a.cfg.ProviderProfiles[names[i]]
+			lines = append(lines, safeDisplayLine(prefix+names[i]+"  ·  "+profile.Provider+" / "+profile.Model))
+		}
+		screenLines(lines)
+		switch readKey(reader) {
+		case "q", "b", "esc":
+			return
+		case "up", "k":
+			index = max(0, index-1)
+		case "down", "j":
+			index = min(len(names)-1, index+1)
+		case "enter":
+			cfg := loadProviderConfig(names[index])
+			if cfg.configError != nil {
+				a.status = cfg.configError.Error()
+				return
+			}
+			a.cfg = cfg
+			a.status = "Selected " + cfg.ProviderProfile + " for this session"
+			return
+		}
+	}
+}
+
 func (a *App) submitWithSpinner(prompt string) error {
 	a.busy = true
 	a.spinnerFrame = 0
@@ -322,4 +381,33 @@ func (a *App) submitWithSpinner(prompt string) error {
 			a.render()
 		}
 	}
+}
+
+func (a *App) toggleHidden() error {
+	show := !a.showHidden
+	root := &Node{name: a.root.name, dir: true, expanded: true, includeHidden: show}
+	if err := scan(root, a.cwd); err != nil {
+		return err
+	}
+	var restore func(*Node, *Node)
+	restore = func(old, next *Node) {
+		next.expanded, next.selected = old.expanded, old.selected
+		previous := make(map[string]*Node, len(old.children))
+		for _, child := range old.children {
+			previous[child.name] = child
+		}
+		for _, child := range next.children {
+			if prior := previous[child.name]; prior != nil {
+				restore(prior, child)
+			}
+		}
+	}
+	restore(a.root, root)
+	a.root, a.showHidden = root, show
+	a.refresh()
+	a.status = "Hidden files excluded"
+	if show {
+		a.status = "Hidden files shown. Select the hidden files or folders to include."
+	}
+	return nil
 }

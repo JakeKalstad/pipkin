@@ -164,6 +164,16 @@ func TestVLLMAgenticDelivery(t *testing.T) {
 		}
 		calls.Add(1)
 		request := body.Messages[1].Content
+		if os.Getenv("PIPKIN_TEST_LANGGRAPH") == "1" {
+			if strings.Contains(request, "Original request:") {
+				if !strings.Contains(request, "--- ORIGINAL FILE: README.md ---\nstarting README") ||
+					!strings.Contains(request, "Additional review focus: compatibility") {
+					t.Error("text reviewer did not receive review focus and original changed file")
+				}
+			} else if !strings.Contains(request, "Additional implementation focus: preserve callers") {
+				t.Error("draft did not receive implementation focus")
+			}
+		}
 		if strings.Index(request, "PROJECT FILES") != 0 || strings.Index(request, "USER REQUEST:") < strings.Index(request, "--- FILE: README.md ---") {
 			t.Errorf("file context must precede request: %s", request)
 		}
@@ -190,7 +200,7 @@ func TestVLLMAgenticDelivery(t *testing.T) {
 	cfg := loadConfig()
 	if os.Getenv("PIPKIN_TEST_LANGGRAPH") == "1" {
 		cfg.AgentProfile = "integration"
-		cfg.AgentProfiles = map[string]AgentProfile{"integration": {Runner: "langgraph", ReviewPasses: 3, ReviewFocus: "compatibility"}}
+		cfg.AgentProfiles = map[string]AgentProfile{"integration": {Runner: "langgraph", ReviewPasses: 3, ReviewFocus: "compatibility", DraftFocus: "preserve callers", ReviewContextBytes: 4096}}
 	}
 	job := WorkflowJob{}
 	if err := agenticDelivery(context.Background(), cfg, root, input, result, "Update README", &job); err != nil {

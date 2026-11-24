@@ -20,9 +20,11 @@ import (
 var agentGraphScript string
 
 type AgentProfile struct {
-	Runner       string `json:"runner"`
-	ReviewPasses int    `json:"review_passes"`
-	ReviewFocus  string `json:"review_focus,omitempty"`
+	Runner             string `json:"runner"`
+	ReviewPasses       int    `json:"review_passes"`
+	DraftFocus         string `json:"draft_focus,omitempty"`
+	ReviewContextBytes int    `json:"review_context_bytes,omitempty"`
+	ReviewFocus        string `json:"review_focus,omitempty"`
 }
 
 func (c Config) activeAgentProfile() (string, AgentProfile, error) {
@@ -35,6 +37,14 @@ func (c Config) activeAgentProfile() (string, AgentProfile, error) {
 	}
 	profile, ok := c.AgentProfiles[name]
 	if !ok {
+		switch name {
+		case "focused":
+			profile, ok = AgentProfile{Runner: "langgraph", ReviewPasses: 1, ReviewContextBytes: 4096}, true
+		case "thorough":
+			profile, ok = AgentProfile{Runner: "langgraph", ReviewPasses: 2, ReviewContextBytes: 8192}, true
+		}
+	}
+	if !ok {
 		return "", AgentProfile{}, fmt.Errorf("unknown agent profile %q", name)
 	}
 	if profile.Runner != "langgraph" {
@@ -42,6 +52,9 @@ func (c Config) activeAgentProfile() (string, AgentProfile, error) {
 	}
 	if profile.ReviewPasses < 1 || profile.ReviewPasses > 3 {
 		return "", AgentProfile{}, fmt.Errorf("agent profile %q requires 1–3 review passes", name)
+	}
+	if profile.ReviewContextBytes < 0 || profile.ReviewContextBytes > 16384 {
+		return "", AgentProfile{}, fmt.Errorf("agent profile %q requires review_context_bytes between 0 and 16384", name)
 	}
 	return name, profile, nil
 }
@@ -51,9 +64,9 @@ func listAgentProfiles(w io.Writer, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	names := []string{"builtin"}
+	names := []string{"builtin", "focused", "thorough"}
 	for name := range cfg.AgentProfiles {
-		if name != "builtin" {
+		if name != "builtin" && name != "focused" && name != "thorough" {
 			names = append(names, name)
 		}
 	}

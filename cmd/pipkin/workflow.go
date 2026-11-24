@@ -57,13 +57,15 @@ func emit(ctx context.Context, event workflowEvent) {
 }
 
 type WorkflowJob struct {
-	Operation      string   `json:"operation,omitempty"`
-	DraftChanged   *bool    `json:"draft_changed,omitempty"`
-	AgentProfile   string   `json:"agent_profile,omitempty"`
-	TextFallback   bool     `json:"text_fallback,omitempty"`
-	ContextOmitted []string `json:"context_omitted,omitempty"`
-	Unchanged      bool     `json:"unchanged,omitempty"`
-	LangfuseStatus string   `json:"langfuse_status,omitempty"`
+	PromptPreset    string   `json:"prompt_preset,omitempty"`
+	ProviderProfile string   `json:"provider_profile,omitempty"`
+	Operation       string   `json:"operation,omitempty"`
+	DraftChanged    *bool    `json:"draft_changed,omitempty"`
+	AgentProfile    string   `json:"agent_profile,omitempty"`
+	TextFallback    bool     `json:"text_fallback,omitempty"`
+	ContextOmitted  []string `json:"context_omitted,omitempty"`
+	Unchanged       bool     `json:"unchanged,omitempty"`
+	LangfuseStatus  string   `json:"langfuse_status,omitempty"`
 
 	ID           string            `json:"id"`
 	Created      string            `json:"created"`
@@ -96,7 +98,16 @@ func saveJob(dir string, j WorkflowJob) error {
 	if e != nil {
 		return e
 	}
-	return os.WriteFile(filepath.Join(dir, "job.json"), b, 0600)
+	f, err := os.CreateTemp(dir, ".job-*.json")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	_, writeErr := f.Write(b)
+	if err := errors.Join(writeErr, f.Close()); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), filepath.Join(dir, "job.json"))
 }
 func zipChecksums(input string) (map[string]string, error) {
 	zr, e := zip.OpenReader(input)
@@ -541,8 +552,8 @@ func intNum(v any) int {
 	}
 	return 0
 }
-func workflowSend(ctx context.Context, root, manifest, promptFile string, agentic bool) error {
-	files, err := filesFromJSON(root, manifest)
+func workflowSend(ctx context.Context, root, manifest, promptFile string, agentic bool, showHidden ...bool) error {
+	files, err := filesFromJSON(root, manifest, showHidden...)
 	if err != nil {
 		return err
 	}
@@ -555,13 +566,16 @@ func workflowSend(ctx context.Context, root, manifest, promptFile string, agenti
 
 // Every provider and entry point records a reviewable session.
 func workflowSendFiles(ctx context.Context, root string, files []*Node, prompt string, agentic bool) error {
+	return workflowSendConfigured(ctx, root, files, prompt, agentic, loadConfig())
+}
+
+func workflowSendConfigured(ctx context.Context, root string, files []*Node, prompt string, agentic bool, cfg Config) error {
 	if len(files) == 0 {
 		return errors.New("nothing selected")
 	}
 	if strings.TrimSpace(prompt) == "" {
 		return errors.New("prompt is required")
 	}
-	cfg := loadConfig()
 	if cfg.configError != nil {
 		return cfg.configError
 	}
@@ -578,6 +592,7 @@ func workflowSendFiles(ctx context.Context, root string, files []*Node, prompt s
 	}
 	job := WorkflowJob{ID: filepath.Base(dir), Created: time.Now().UTC().Format(time.RFC3339), Root: root, Status: "running", Agentic: agentic, Files: map[string]string{}}
 	job.Provider = cfg.Provider
+	job.ProviderProfile = cfg.ProviderProfile
 	job.Model = cfg.Model
 	if err := os.WriteFile(filepath.Join(dir, "prompt.txt"), []byte(prompt), 0600); err != nil {
 		return fmt.Errorf("save original prompt: %w", err)
@@ -592,12 +607,17 @@ func workflowSendFiles(ctx context.Context, root string, files []*Node, prompt s
 	if e != nil {
 		return e
 	}
-	_ = saveJob(dir, job)
+	if err := saveJob(dir, job); err != nil {
+		return fmt.Errorf("save delivery: %w", err)
+	}
 	emit(ctx, workflowEvent{Type: "job", Job: dir, Message: "Session saved"})
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	defer cancel()
 	trace := &llmTrace{}
 	ctx = context.WithValue(ctx, llmTraceKey{}, trace)
+	emit(ctx, workflowEvent{Type: "status", Message: "Sending to " + cfg.Model})
 	switch {
 	case agentic:
 		e = agenticDelivery(ctx, cfg, root, input, result, prompt, &job)
@@ -667,6 +687,7 @@ func agenticDelivery(ctx context.Context, cfg Config, root, input, result, promp
 		return err
 	}
 	job.AgentProfile = name
+	job.PromptPreset = engineeringPromptVersion
 	inputFiles := job.Files
 	if inputFiles == nil {
 		inputFiles, err = zipChecksums(input)
@@ -692,7 +713,7 @@ func agenticDelivery(ctx context.Context, cfg Config, root, input, result, promp
 	runDraft := func() error {
 		ctx := context.WithValue(ctx, llmStageKey{}, "draft")
 		emit(ctx, workflowEvent{Type: "status", Message: "Agentic draft: planning and implementing"})
-		draftPrompt := "Inspect the supplied project, plan the work against the requirements, implement it, and run focused checks in the interpreter where possible.\n\nUser request:\n" + prompt
+		draftPrompt := agentPrompt(prompt, profile.DraftFocus, false, true)
 		var err error
 		if hosted {
 			err = runArchivePass(ctx, cfg, input, draft, draftPrompt, "", job, &projectID)
@@ -717,7 +738,7 @@ func agenticDelivery(ctx context.Context, cfg Config, root, input, result, promp
 			}
 		}
 		if !hosted {
-			textPrompt := "Implement the requested changes in the supplied files. Review your edits for consistency. You cannot execute project code.\n\nUser request:\n" + prompt
+			textPrompt := agentPrompt(prompt, profile.DraftFocus, false, false)
 			err = sendOpenAI(ctx, cfg, root, input, draft, textPrompt, &job.ContextOmitted, job)
 		}
 		if err != nil {
@@ -746,10 +767,7 @@ func agenticDelivery(ctx context.Context, cfg Config, root, input, result, promp
 		if completedReviews+1 < profile.ReviewPasses {
 			next = filepath.Join(filepath.Dir(result), fmt.Sprintf("review-%d.zip", completedReviews+1))
 		}
-		reviewTask := prompt
-		if profile.ReviewFocus != "" {
-			reviewTask += "\n\nAdditional review focus: " + profile.ReviewFocus
-		}
+		reviewTask := agentPrompt(prompt, profile.ReviewFocus, true, true)
 		var err error
 		emit(ctx, workflowEvent{Type: "status", Message: fmt.Sprintf("Agentic review %d/%d", completedReviews+1, profile.ReviewPasses)})
 		if hosted {
@@ -761,8 +779,23 @@ func agenticDelivery(ctx context.Context, cfg Config, root, input, result, promp
 			}
 		}
 		if !hosted {
-			reviewPrompt := "The supplied files are a draft implementation. Review it against the original request for missing requirements and regressions. Return only corrections to the draft. You do not have access to run tests in this pass.\n\nOriginal request:\n" + reviewTask
-			err = sendOpenAI(ctx, cfg, root, candidate, next, reviewPrompt, &job.ContextOmitted, job)
+			reviewPrompt := agentPrompt(prompt, profile.ReviewFocus, true, false)
+			textConfig := cfg
+			if profile.ReviewContextBytes > 0 {
+				draftFiles, err := zipChecksums(candidate)
+				if err != nil {
+					return fmt.Errorf("inspect review candidate: %w", err)
+				}
+				budget := min(profile.ReviewContextBytes, cfg.MaxContextBytes/8)
+				reference, err := originalReviewContext(input, inputFiles, draftFiles, budget)
+				if err != nil {
+					return fmt.Errorf("read original review context: %w", err)
+				}
+				reviewPrompt += reference
+				// Reserve space for the reference so it doesn't increase the file context budget.
+				textConfig.MaxContextBytes -= len(reference)
+			}
+			err = sendOpenAI(ctx, textConfig, root, candidate, next, reviewPrompt, &job.ContextOmitted, job)
 		}
 		if err != nil {
 			return fmt.Errorf("agentic review: %w", err)

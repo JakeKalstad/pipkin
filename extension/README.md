@@ -10,3 +10,7 @@ The **Pipkin** activity-bar view now lists saved sessions. Open a session for na
 ## Licence
 
 This source code is licensed under the Mozilla Public License 2.0. See [LICENSE](LICENSE).
+
+## Delivery options
+
+When sending files, choose **Standard** for one model pass or **Agentic** for a draft and review. Set `pipkin.providerProfile` in editor settings to choose a named Pipkin provider profile for editor requests. Open **Pipkin Deliveries** to revisit the prompt, inspect diffs, or see why an attempt failed.

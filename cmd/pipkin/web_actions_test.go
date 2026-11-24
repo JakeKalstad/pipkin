@@ -21,7 +21,7 @@ func TestWebPickerDefaultsAndCSRF(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
 	body := w.Body.String()
-	if w.Code != 200 || !strings.Contains(body, `value="main.go"`) || !strings.Contains(body, "(ignored)") {
+	if w.Code != 200 || !strings.Contains(body, `value="main.go"`) || strings.Contains(body, `value=".env"`) {
 		t.Fatalf("picker response %d", w.Code)
 	}
 	re := regexp.MustCompile(`name="csrf" value="([a-f0-9]+)"`)

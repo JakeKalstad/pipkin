@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -54,6 +55,7 @@ type Config struct {
 type Node struct {
 	name, rel                        string
 	dir, expanded, selected, ignored bool
+	includeHidden                    bool
 	parent                           *Node
 	children                         []*Node
 }
@@ -64,6 +66,7 @@ type App struct {
 	cursor, offset int
 	status, prompt string
 	editing, busy  bool
+	showHidden     bool
 	agentic        bool
 	cfg            Config
 	spinnerFrame   int
@@ -78,10 +81,13 @@ var ignoreDirs = map[string]bool{".git": true, ".pipkin": true, ".venv": true, "
 var ignoreFiles = map[string]bool{".env": true, ".DS_Store": true, "Thumbs.db": true}
 
 func ignored(name string, dir bool) bool {
+	if protectedName(name, dir) {
+		return true
+	}
 	if dir {
 		return ignoreDirs[name]
 	}
-	if name == "pipkin" || ignoreFiles[name] || strings.HasPrefix(name, ".env.") {
+	if name == "pipkin" || ignoreFiles[name] {
 		return true
 	}
 	for _, s := range []string{".pyc", ".log", ".zip", ".tar", ".tgz", ".pem", ".key", ".vsix"} {
@@ -104,9 +110,12 @@ func scan(parent *Node, base string) error {
 	})
 	for _, e := range entries {
 		name := e.Name()
+		if protectedName(name, e.IsDir()) || (hiddenName(name) && !parent.includeHidden) || e.Type()&os.ModeSymlink != 0 {
+			continue
+		}
 		rel := filepath.Join(parent.rel, name)
 		ig := ignored(name, e.IsDir())
-		n := &Node{name: name, rel: rel, dir: e.IsDir(), selected: parent.selected && !ig, ignored: ig, parent: parent}
+		n := &Node{name: name, rel: rel, dir: e.IsDir(), selected: parent.selected && !ig && !hiddenName(name), ignored: ig, includeHidden: parent.includeHidden, parent: parent}
 		parent.children = append(parent.children, n)
 		if e.IsDir() && !ig { // Skip expensive ignored build/dependency trees until opened.
 			if err := scan(n, filepath.Join(base, name)); err != nil {
@@ -119,14 +128,16 @@ func scan(parent *Node, base string) error {
 func setTree(n *Node, selected bool) {
 	n.selected = selected
 	for _, c := range n.children {
-		setTree(c, selected)
+		if !selected || !hiddenName(c.name) {
+			setTree(c, selected)
+		}
 	}
 }
 func recalc(n *Node) {
 	for p := n.parent; p != nil; p = p.parent {
 		all := len(p.children) > 0
 		for _, c := range p.children {
-			if !c.selected {
+			if !hiddenName(c.name) && !c.selected {
 				all = false
 				break
 			}
@@ -188,7 +199,9 @@ func (c Config) supportsAgentic() bool {
 	}
 }
 
-func loadConfig() Config {
+func loadConfig() Config { return loadProviderConfig("") }
+
+func loadProviderConfig(selectedProfile string) Config {
 	var c Config
 	path := configPath()
 	data, err := os.ReadFile(path)
@@ -203,6 +216,9 @@ func loadConfig() Config {
 	}
 	if profile := strings.TrimSpace(os.Getenv("PIPKIN_PROVIDER_PROFILE")); profile != "" {
 		c.ProviderProfile = profile
+	}
+	if selectedProfile != "" {
+		c.ProviderProfile = selectedProfile
 	}
 	if c.ProviderProfile != "" {
 		profile, ok := c.ProviderProfiles[c.ProviderProfile]
@@ -290,8 +306,11 @@ func writeZip(root string, files []*Node, dest string) error {
 	}
 	w := zip.NewWriter(f)
 	for _, n := range files {
+		if !safeRel(n.rel) || !hiddenPathAllowed(filepath.Clean(n.rel), n.includeHidden) {
+			continue
+		}
 		src := filepath.Join(root, n.rel)
-		info, e := os.Lstat(src)
+		info, e := statSelectedPath(root, filepath.Clean(n.rel))
 		if e != nil {
 			w.Close()
 			f.Close()
@@ -327,7 +346,7 @@ func writeZip(root string, files []*Node, dest string) error {
 	return f.Close()
 }
 func readKey(r *bufio.Reader) string {
-	b, e := r.ReadByte()
+	b, _, e := r.ReadRune()
 	if e != nil {
 		return "q"
 	}
@@ -341,12 +360,15 @@ func readKey(r *bufio.Reader) string {
 		return "tab"
 	}
 	if b == '\x1b' {
-		next, _ := r.ReadByte()
-		if next != '[' {
+		if r.Buffered() < 2 {
 			return "esc"
 		}
-		b, _ = r.ReadByte()
-		switch b {
+		suffix, _ := r.Peek(2)
+		if suffix[0] != '[' || !strings.ContainsRune("ABCD", rune(suffix[1])) {
+			return "esc"
+		}
+		_, _ = r.Discard(2)
+		switch suffix[1] {
 		case 'A':
 			return "up"
 		case 'B':
@@ -422,7 +444,7 @@ func (a *App) submit(ctx context.Context, prompt string) error {
 	if err != nil {
 		return err
 	}
-	return workflowSendFiles(ctx, a.cwd, files, prompt, a.agentic)
+	return workflowSendConfigured(ctx, a.cwd, files, prompt, a.agentic, a.cfg)
 }
 func sendMultipart(ctx context.Context, cfg Config, input, output, prompt string) (err error) {
 	if cfg.Endpoint == "" {
@@ -868,8 +890,8 @@ func validateNewContextFile(root, path string, included map[string]bool) error {
 }
 
 // files-from is a JSON array of project-relative paths. Directories are expanded
-// recursively with default ignores; explicit file paths may include ignored files.
-func filesFromJSON(root, manifest string) ([]*Node, error) {
+// recursively with default ignores. Hidden paths require explicit opt-in.
+func filesFromJSON(root, manifest string, showHidden ...bool) ([]*Node, error) {
 	data, err := os.ReadFile(manifest)
 	if err != nil {
 		return nil, err
@@ -878,29 +900,42 @@ func filesFromJSON(root, manifest string) ([]*Node, error) {
 	if err := json.Unmarshal(data, &paths); err != nil {
 		return nil, fmt.Errorf("manifest must contain a JSON array: %w", err)
 	}
+	return selectPaths(root, paths, len(showHidden) > 0 && showHidden[0])
+}
+
+func statSelectedPath(root, rel string) (os.FileInfo, error) {
+	current := root
+	if rel == "." {
+		return os.Stat(root)
+	}
+	var info os.FileInfo
+	var err error
+	for _, segment := range strings.Split(filepath.ToSlash(rel), "/") {
+		current = filepath.Join(current, segment)
+		info, err = os.Lstat(current)
+		if err != nil {
+			return nil, err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("symlink not allowed: %s", rel)
+		}
+	}
+	return info, err
+}
+
+func selectPaths(root string, paths []string, showHidden bool) ([]*Node, error) {
 	unique := map[string]*Node{}
 	var add func(string, bool) error
 	add = func(rel string, fromDirectory bool) error {
 		rel = filepath.Clean(rel)
-		if !safeRel(filepath.ToSlash(rel)) || filepath.IsAbs(rel) {
+		if (rel != "." && !safeRel(filepath.ToSlash(rel))) || filepath.IsAbs(rel) {
 			return fmt.Errorf("invalid relative path: %q", rel)
 		}
-		full := filepath.Join(root, rel)
-		// Never follow symlinks. In particular, prevent symlink parents from
-		// escaping the project boundary.
-		segments := strings.Split(filepath.ToSlash(rel), "/")
-		current := root
-		for _, segment := range segments {
-			current = filepath.Join(current, segment)
-			fi, err := os.Lstat(current)
-			if err != nil {
-				return err
-			}
-			if fi.Mode()&os.ModeSymlink != 0 {
-				return fmt.Errorf("symlink not allowed: %s", rel)
-			}
+		if !hiddenPathAllowed(rel, showHidden) {
+			return nil
 		}
-		fi, err := os.Lstat(full)
+		full := filepath.Join(root, rel)
+		fi, err := statSelectedPath(root, rel)
 		if err != nil {
 			return err
 		}
@@ -910,7 +945,7 @@ func filesFromJSON(root, manifest string) ([]*Node, error) {
 				return err
 			}
 			for _, entry := range entries {
-				if ignored(entry.Name(), entry.IsDir()) {
+				if hiddenName(entry.Name()) || ignored(entry.Name(), entry.IsDir()) || entry.Type()&os.ModeSymlink != 0 {
 					continue
 				}
 				if err := add(filepath.Join(rel, entry.Name()), true); err != nil {
@@ -919,7 +954,7 @@ func filesFromJSON(root, manifest string) ([]*Node, error) {
 			}
 		} else if fi.Mode().IsRegular() {
 			if !fromDirectory || !ignored(filepath.Base(rel), false) {
-				unique[rel] = &Node{rel: rel, name: filepath.Base(rel)}
+				unique[rel] = &Node{rel: rel, name: filepath.Base(rel), includeHidden: showHidden}
 			}
 		}
 		return nil
@@ -940,8 +975,8 @@ func filesFromJSON(root, manifest string) ([]*Node, error) {
 	return result, nil
 }
 
-func runCLI(root, manifest, output, promptFile string, doLLM bool) error {
-	files, err := filesFromJSON(root, manifest)
+func runCLI(root, manifest, output, promptFile string, doLLM, showHidden bool) error {
+	files, err := filesFromJSON(root, manifest, showHidden)
 	if err != nil {
 		return err
 	}
@@ -1012,6 +1047,7 @@ func main() {
 	snippet := flag.Bool("snippet", false, "answer a JSON snippet request from stdin")
 	mcpMode := flag.Bool("mcp", false, "start Pipkin MCP stdio server for OpenCode/Hermes")
 	webMode := flag.Bool("web", false, "serve local web review UI (requires LISTEN_URL)")
+	showHidden := flag.Bool("show-hidden", false, "show hidden paths or allow explicitly selected hidden paths")
 	zipMode := flag.Bool("zip", false, "create ZIP without a TUI")
 	profile := flag.String("agent-profile", "", "select an agent profile for this process")
 	providerProfile := flag.String("provider-profile", "", "select a provider profile")
@@ -1074,20 +1110,6 @@ func main() {
 		}
 		return
 	}
-	if *webMode {
-		if err := serveWebFromEnv(); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
-	}
-	if addr := os.Getenv("LISTEN_URL"); addr != "" && !*mcpMode && !*zipMode && !*workflowMode && *reviewJob == "" && *gitDiffJob == "" && *applyJob == "" && !*llmMode {
-		go func() {
-			if err := serveWeb(addr); err != nil {
-				fmt.Fprintln(os.Stderr, "Pipkin web:", err)
-			}
-		}()
-	}
 	if *mcpMode {
 		if err := serveMCP(os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -1138,12 +1160,26 @@ func main() {
 		fmt.Fprintln(os.Stderr, "not a directory:", cwd)
 		os.Exit(1)
 	}
+	if *webMode {
+		if err := serveWebFromEnv(cwd); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if addr := os.Getenv("LISTEN_URL"); addr != "" && !*mcpMode && !*zipMode && !*workflowMode && *reviewJob == "" && *gitDiffJob == "" && *applyJob == "" && !*llmMode {
+		go func() {
+			if err := serveWeb(addr, cwd); err != nil {
+				fmt.Fprintln(os.Stderr, "Pipkin web:", err)
+			}
+		}()
+	}
 	if *workflowMode {
 		if *manifest == "" || *promptFile == "" {
 			fmt.Fprintln(os.Stderr, "--workflow requires --files-from and --prompt-file")
 			os.Exit(2)
 		}
-		if e := workflowSend(context.Background(), cwd, *manifest, *promptFile, *agentic); e != nil {
+		if e := workflowSend(context.Background(), cwd, *manifest, *promptFile, *agentic, *showHidden); e != nil {
 			fmt.Fprintln(os.Stderr, e)
 			os.Exit(1)
 		}
@@ -1158,18 +1194,18 @@ func main() {
 			fmt.Fprintln(os.Stderr, "--files-from is required")
 			os.Exit(2)
 		}
-		if err := runCLI(cwd, *manifest, *output, *promptFile, *llmMode); err != nil {
+		if err := runCLI(cwd, *manifest, *output, *promptFile, *llmMode, *showHidden); err != nil {
 			fmt.Fprintln(os.Stderr, "pipkin:", err)
 			os.Exit(1)
 		}
 		return
 	}
-	root := &Node{name: filepath.Base(cwd), rel: "", dir: true, selected: true, expanded: true}
+	root := &Node{name: filepath.Base(cwd), rel: "", dir: true, selected: true, expanded: true, includeHidden: *showHidden}
 	if err := scan(root, cwd); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	a := &App{root: root, cwd: cwd, cfg: loadConfig(), agentic: *agentic, status: "Ready for your next delivery"}
+	a := &App{root: root, cwd: cwd, showHidden: *showHidden, cfg: loadConfig(), agentic: *agentic, status: "Ready for your next delivery"}
 	a.refresh()
 	// Linux/macOS terminal mode via stty. No third-party dependencies.
 	old, e := stty("-g")
@@ -1194,6 +1230,10 @@ func main() {
 				a.editing = false
 				a.status = "cancelled"
 			case "enter":
+				if strings.TrimSpace(a.prompt) == "" {
+					a.status = "Enter a prompt before sending"
+					continue
+				}
 				a.editing = false
 				e := a.submitWithSpinner(a.prompt)
 				if e != nil {
@@ -1205,7 +1245,8 @@ func main() {
 					a.prompt = a.prompt[:len(a.prompt)-s]
 				}
 			default:
-				if len(key) == 1 && key[0] >= 32 && len(a.prompt) < 4000 {
+				character, _ := utf8.DecodeRuneInString(key)
+				if utf8.RuneCountInString(key) == 1 && unicode.IsPrint(character) && len(a.prompt)+len(key) <= 4000 {
 					a.prompt += key
 				}
 			}
@@ -1253,6 +1294,19 @@ func main() {
 				setTree(n, !n.selected)
 				recalc(n)
 			}
+		case "H":
+			if err := a.toggleHidden(); err != nil {
+				a.status = err.Error()
+			}
+			root = a.root
+		case "g", "G":
+			scope := ""
+			if key == "g" && n != nil {
+				scope = n.rel
+			}
+			if err := a.gitTUI(reader, scope); err != nil {
+				a.status = "Git: " + err.Error()
+			}
 		case "a":
 			setTree(root, true)
 		case "n":
@@ -1264,6 +1318,8 @@ func main() {
 			} else {
 				a.status = "Saved: " + path
 			}
+		case "m":
+			a.chooseProvider(reader)
 		case "r":
 			if e := a.reviewTUI(reader); e != nil {
 				a.status = "Review: " + e.Error()

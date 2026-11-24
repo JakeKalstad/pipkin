@@ -4,6 +4,8 @@
     "thorough": {
       "runner": "langgraph",
       "review_passes": 2,
+      "review_context_bytes": 8192,
+      "draft_focus": "Prefer focused edits and preserve public interfaces.",
       "review_focus": "Check regressions, edge cases, and compatibility."
     }
   }

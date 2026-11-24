@@ -2,27 +2,143 @@
 :root{color-scheme:dark;font:14px/1.5 system-ui,sans-serif;background:#10191d;color:#e7f1ee}*{box-sizing:border-box}body{margin:0}header{border-bottom:1px solid #34464c;padding:16px 24px;display:flex;align-items:center;gap:16px}header a{font-size:21px;color:#c2f4d5;text-decoration:none;font-weight:800}.sub{color:#a1b8b8}.wrap{max-width:1500px;margin:24px auto;padding:0 24px}.columns{display:grid;grid-template-columns:minmax(320px,1.1fr) minmax(320px,1fr);gap:24px}.card{background:#19262b;border:1px solid #31474d;border-radius:12px;padding:18px;margin-bottom:16px}.job{display:block;text-decoration:none;color:inherit}.job:hover{border-color:#8ee5bd}h1{font-size:23px;margin:0 0 10px}h2{font-size:16px;margin:0 0 12px}h3{font-size:14px}.status{border:1px solid #50676d;border-radius:99px;padding:2px 8px;font-size:12px}a{color:#9ee8c0}textarea{width:100%;min-height:110px;background:#0e1b21;border:1px solid #49616b;color:inherit;padding:12px;border-radius:8px;font:inherit}button{cursor:pointer;color:#10211b;background:#9de8c0;border:0;border-radius:6px;padding:8px 12px;font-weight:700}button.secondary{background:#384e55;color:#f0f7f5}button.danger{background:#643f47;color:#ffe7e7}button:disabled{opacity:.4;cursor:not-allowed}.actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.tree{max-height:450px;overflow:auto;background:#101d22;padding:12px;border:1px solid #344951;border-radius:8px}.tree details{padding-left:16px}.tree label{display:inline-flex;gap:7px;align-items:center;cursor:pointer}.tree .ignored{opacity:.6}.tree summary{cursor:pointer}.tree input{accent-color:#8de4b8}.tree .leaf{display:block;padding-left:16px}.diff{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#354751;border:1px solid #354751;border-radius:8px;overflow:hidden}.pane{min-width:0;background:#101e24}.pane h3{margin:0;background:#24373d;padding:9px}.pane pre{margin:0;padding:10px;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.55 ui-monospace,monospace;max-height:420px;overflow:auto}.file{margin:20px 0;border-top:1px solid #344951;padding-top:15px}.filehead{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}.meta{color:#b6c9c7}.notice{padding:12px;background:#233e37;border:1px solid #3a7460;border-radius:8px}.error{padding:12px;background:#4a2529;color:#ffcdcd;border-radius:8px}form.inline{display:inline}.nav{margin:14px 0}.bar{display:flex;flex-wrap:wrap;gap:12px;margin:12px 0}.bar span{background:#23343a;border-radius:7px;padding:7px 12px}@media(max-width:820px){.columns,.diff{grid-template-columns:1fr}.wrap{padding:0 12px}header{padding:14px}}
 header{flex-wrap:wrap}header nav{display:flex;gap:12px}header a.service-link{font-size:14px;text-decoration:underline}
 .unified-diff{overflow:auto;white-space:pre;padding:0;background:#10191d}.diff-line{display:block;min-width:max-content;min-height:1.5em;padding:0 12px}.diff-line.added{background:#173b2c;color:#b5f5cc}.diff-line.removed{background:#47242b;color:#ffbec5}.diff-line.hunk{background:#203641;color:#a4dbf2}
-</style></head><body><header><a href="/">🦦 PIPKIN</a><span class="sub">Pick · Pack · Prompt · Inspect · Approve</span>{{if .Links}}<nav aria-label="Configured services">{{range .Links}} <a class="service-link" href="{{.URL}}" title="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Label}}</a>{{end}}</nav>{{end}}</header><main class="wrap">
+:root{--line:#345053;--muted:#afc2bf;--accent:#a3edd0}
+body{background:radial-gradient(ellipse at top left,#183037 0,transparent 46rem),#10191d}
+.wrap{max-width:1300px;margin:32px auto}.columns{grid-template-columns:minmax(0,1.7fr) minmax(275px,1fr);gap:20px}
+.card{box-shadow:0 12px 35px #070e1033}.intro{margin-bottom:22px}.intro h1{font-size:34px;letter-spacing:-.035em;line-height:1.15}
+.actions{gap:10px}.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0}
+input[type=search],select{color:inherit;background:#102027;border:1px solid var(--line);border-radius:7px;padding:8px 10px;font:inherit;min-width:0}
+input[type=search]{flex:1 1 160px}label{overflow-wrap:anywhere}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+[hidden]{display:none!important}.job{padding:12px;margin-bottom:8px}.job strong,.file h2{overflow-wrap:anywhere}.job .meta{margin:4px 0 0}
+.status{white-space:nowrap}.status[data-status=completed],.status[data-status=approved]{color:#b9f2d2;border-color:#3f8663}.status[data-status=failed],.status[data-status=rejected]{color:#ffb8c4;border-color:#a45d68}.status[data-status=running],.status[data-status=pending]{color:#ffdf96;border-color:#8f7446}
+.review-tools{position:sticky;top:0;z-index:2;background:#142226;padding:8px 12px;border:1px solid var(--line);border-radius:10px}
+.file{scroll-margin-top:145px}.file:target{border-top-color:var(--accent)}.decision-current{box-shadow:inset 0 0 0 2px var(--accent)}.unified-diff{max-height:42rem}
+@media(max-width:820px){.columns{grid-template-columns:1fr}.intro h1{font-size:27px}.review-tools{position:static}.file{scroll-margin-top:8px}}
+</style></head><body><header><a href="/">🦦 PIPKIN</a><span class="sub">{{.Provider}} · {{.Model}}</span>{{if .Links}}<nav aria-label="Configured services">{{range .Links}} <a class="service-link" href="{{.URL}}" title="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Label}}</a>{{end}}</nav>{{end}}</header><main class="wrap">
 {{if .Notice}}<p class="notice">{{.Notice}}</p>{{end}}{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-{{if not .Job}}<div class="columns"><section><div class="card"><h1>Prepare a delivery</h1><p class="sub">Workspace: <code>{{.Root}}</code></p><form action="/submit" method="post"><input type="hidden" name="csrf" value="{{.Token}}"><h2>Choose files and folders</h2><div class="actions"><button type="button" class="secondary" id="all">Select all visible</button><button type="button" class="secondary" id="none">Clear selection</button></div><div class="tree" id="tree">{{range .Dirs}}{{template "tree" .}}{{end}}</div><p id="selected" class="meta"></p><h2>What should Pipkin change?</h2><textarea name="prompt" required placeholder="Fix the retry logic, add tests, and preserve existing behaviour..."></textarea>{{if .AgenticAvailable}}<p><label><input type="checkbox" name="agentic" value="1"> Agentic mode{{if .AgentProfile}} ({{.AgentProfile}}){{end}}</label></p>{{end}}<p><button type="submit">Send parcel to LLM</button></p></form></div></section><section><h1>Recent deliveries</h1>{{range .Sessions}}<a class="card job" href="/review?job={{.Project}}/{{.ID}}"><strong>{{.Project}} / {{.ID}}</strong> <span class="status">{{.Status}}</span><p class="meta">{{.Model}} · {{.Created}}</p></a>{{else}}<div class="card"><p class="sub">No deliveries yet.</p></div>{{end}}</section></div>
+{{if .Git}}
+<div class="intro"><h1>Git history</h1><p class="sub"><code>{{.Git.Label}}</code>{{if .Git.Upstream}} · Upstream <code>{{.Git.Upstream}}</code>{{end}}</p></div>
+<nav class="toolbar" aria-label="Git views">
+<a href="/">File picker</a><a href="/git">Repository</a>
+<a href="/git?path={{.Git.Scope}}">Branch history</a>
+<a href="/git?path={{.Git.Scope}}&amp;local=1">Local commits</a>
+<a href="/git?path={{.Git.Scope}}&amp;diff=upstream{{if .Git.Local}}&amp;local=1{{end}}#patch">Upstream diff</a>
+<a href="/git?path={{.Git.Scope}}&amp;diff=working{{if .Git.Local}}&amp;local=1{{end}}#patch">Working diff</a>
+</nav>
+{{if .Git.DiffTitle}}<section class="file" id="patch"><div class="filehead"><h2>{{.Git.DiffTitle}}</h2></div><pre class="unified-diff">{{range .Git.Patch}}<span class="diff-line {{.Kind}}">{{.Text}}</span>{{end}}</pre></section>{{end}}
+<section class="card"><h2>{{if .Git.Local}}Local commits{{else}}Branch history{{end}}</h2>
+<p class="meta">Up to 100 commits</p>
+{{range .Git.Commits}}<a class="card job" href="/git?path={{$.Git.Scope}}&amp;diff=commit&amp;commit={{.Hash}}{{if $.Git.Local}}&amp;local=1{{end}}#patch"><strong>{{.Subject}}</strong><p class="meta"><code>{{.Short}}</code> · {{.Date}} · {{.Author}}</p></a>{{else}}{{if not .Error}}<p>No commits for this path.</p>{{end}}{{end}}
+</section>
+{{else if not .Job}}
+<div class="intro"><h1>Prepare a delivery</h1><p class="sub">Workspace <code>{{.Root}}</code></p><nav class="toolbar"><a href="/git">Repository Git history</a><a href="{{if .ShowHidden}}/{{else}}/?hidden=1{{end}}">{{if .ShowHidden}}Hide hidden files{{else}}Show hidden files{{end}}</a></nav></div>
+<div class="columns"><section><div class="card"><form id="submit-delivery" action="/submit" method="post"><input type="hidden" name="csrf" value="{{.Token}}">{{if .ShowHidden}}<input type="hidden" name="show_hidden" value="1">{{end}}<h2>Choose files and folders</h2>
+<div class="toolbar"><input type="search" id="file-search" aria-label="Filter files by path" placeholder="Filter files by path"><button type="button" class="secondary" id="all">Select matching files</button><button type="button" class="secondary" id="none">Clear selection</button></div><div class="tree" id="tree">{{range .Dirs}}{{template "tree" .}}{{end}}</div><p id="selected" class="meta" aria-live="polite"></p><p id="empty-files" class="meta" hidden>No matching files.</p>
+<h2><label for="prompt">What should Pipkin change?</label></h2><textarea id="prompt" name="prompt" required placeholder="Fix the retry logic, add tests, and preserve existing behaviour...">{{.Prompt}}</textarea>{{if .Providers}}<div class="toolbar"><label for="provider-profile">Provider profile</label><select id="provider-profile" name="provider_profile"><option value="" data-agentic="{{.AgenticAvailable}}">Default{{if .ActiveProvider}} ({{.ActiveProvider}}){{end}} · {{.Model}}</option>{{range .Providers}}<option value="{{.Name}}" data-agentic="{{.Agentic}}" {{if eq .Name $.DraftProvider}}selected{{end}}>{{.Label}}</option>{{end}}</select></div>{{end}}
+{{if or .AgenticAvailable .Providers}}<p><label><input type="checkbox" id="agentic-mode" name="agentic" value="1" {{if .AgenticSelected}}checked{{end}}> Agentic mode{{if .AgentProfile}} ({{.AgentProfile}}){{end}}</label></p>{{end}}<p><button type="submit" id="send-delivery">Send delivery</button></p></form></div></section><section><h2>Recent deliveries</h2>{{if .Sessions}}<div class="toolbar"><label for="session-filter">Status</label><select id="session-filter"><option value="">All statuses</option><option value="running">Running</option><option value="completed">Completed</option><option value="failed">Failed</option></select></div><p id="empty-sessions" class="meta" hidden>No deliveries match this status.</p>{{end}}{{range .Sessions}}<a class="card job" data-status="{{.Status}}" href="/review?job={{.Project}}/{{.ID}}"><strong>{{.ID}}</strong> <span class="status" data-status="{{.Status}}">{{.Status}}</span><p class="meta">{{.Model}} · {{.Created}}</p></a>{{else}}<div class="card"><p class="sub">No deliveries yet.</p></div>{{end}}</section></div>
 <script>
-const tree=document.getElementById('tree');function update(){const checked=[...tree.querySelectorAll('input[name="files"]:checked')];document.getElementById('selected').textContent=checked.length+' checked entries (folders expand recursively)'}
-tree.addEventListener('change',e=>{const c=e.target;if(c.matches('input[data-dir]')){const parent=c.closest('details');if(parent)parent.querySelectorAll('input[type="checkbox"]').forEach(x=>x.checked=c.checked)}update()});
-document.getElementById('all').onclick=()=>{tree.querySelectorAll('input[type="checkbox"]:not([data-ignored])').forEach(x=>x.checked=true);update()};document.getElementById('none').onclick=()=>{tree.querySelectorAll('input[type="checkbox"]').forEach(x=>x.checked=false);update()};update();
+(() => {
+  const tree = document.getElementById('tree');
+  const files = Array.from(tree.querySelectorAll('input[name="files"]'));
+  const dirs = Array.from(tree.querySelectorAll('details'));
+  const filter = document.getElementById('file-search');
+  const form = document.getElementById('submit-delivery');
+  const send = document.getElementById('send-delivery');
+  const prompt = document.getElementById('prompt');
+  const visible = file => !file.closest('.leaf').hidden;
+  const bulkEligible = (file, scope = '') =>
+    !file.hasAttribute('data-ignored') &&
+    !file.value.slice(scope.length).split('/').some(part => part.startsWith('.'));
+  const update = () => {
+    const count = files.filter(file => file.checked).length;
+    document.getElementById('selected').textContent = count + (count === 1 ? ' file selected' : ' files selected');
+    send.disabled = !count || !prompt.value.trim();
+    dirs.forEach(dir => {
+      const toggle = dir.querySelector(':scope > summary input');
+      const children = Array.from(dir.querySelectorAll('input[name="files"]')).filter(file => bulkEligible(file, toggle.value + '/'));
+      toggle.checked = children.length > 0 && children.every(file => file.checked);
+      toggle.indeterminate = !toggle.checked && children.some(file => file.checked);
+      toggle.disabled = children.length === 0;
+    });
+  };
+  filter.addEventListener('input', () => {
+    const term = filter.value.trim().toLowerCase();
+    files.forEach(file => { file.closest('.leaf').hidden = term && !file.value.toLowerCase().includes(term); });
+    dirs.forEach(dir => {
+      dir.hidden = Boolean(term) && !Array.from(dir.querySelectorAll('input[name="files"]')).some(visible);
+      if (term && !dir.hidden) dir.open = true;
+    });
+    document.getElementById('empty-files').hidden = files.some(visible);
+  });
+  tree.addEventListener('change', event => {
+    const toggle = event.target;
+    if (toggle.matches('input[data-dir]')) {
+      toggle.closest('details').querySelectorAll('input[name="files"]').forEach(file => {
+        if (visible(file) && bulkEligible(file, toggle.value + '/')) file.checked = toggle.checked;
+      });
+    }
+    update();
+  });
+  document.getElementById('all').onclick = () => {
+    files.filter(file => visible(file) && bulkEligible(file)).forEach(file => { file.checked = true; });
+    update();
+  };
+  document.getElementById('none').onclick = () => { files.forEach(file => { file.checked = false; }); update(); };
+  const provider = document.getElementById('provider-profile');
+  const agentic = document.getElementById('agentic-mode');
+  if (provider && agentic) {
+    const updateMode = () => {
+      const available = provider.selectedOptions[0].dataset.agentic === 'true';
+      agentic.disabled = !available;
+      agentic.closest('p').hidden = !available;
+    };
+    provider.addEventListener('change', updateMode);
+    updateMode();
+  }
+  prompt.addEventListener('input', update);
+  form.addEventListener('submit', () => { send.disabled = true; send.textContent = 'Starting delivery…'; });
+  window.addEventListener('pageshow', () => { send.textContent = 'Send delivery'; update(); });
+  const status = document.getElementById('session-filter');
+  if (status) status.onchange = () => {
+    const jobs = Array.from(document.querySelectorAll('.job[data-status]'));
+    jobs.forEach(job => { job.hidden = Boolean(status.value) && job.dataset.status !== status.value; });
+    document.getElementById('empty-sessions').hidden = jobs.some(job => !job.hidden);
+  };
+  update();
+})();
 </script>
-{{else}}<p><a href="/">← All deliveries</a></p><h1>Review {{.JobInfo.ID}} <span class="status">{{.JobInfo.Status}}</span></h1><p class="meta">{{.JobInfo.Provider}} · {{.JobInfo.Model}} · {{.Root}} · {{.JobInfo.InputTokens}} input tokens{{if .JobInfo.CachedTokens}} ({{.JobInfo.CachedTokens}} cached){{end}} · {{.JobInfo.OutputTokens}} output tokens</p>
-{{if eq .JobInfo.Status "running"}}<p class="notice">Pipkin is working. This page updates every few seconds.</p><script>setTimeout(()=>location.reload(),3000)</script>{{end}}
+{{else}}<nav class="toolbar"><a href="/">← All deliveries</a>{{if ne .JobInfo.Status "running"}}<a href="/?from={{.Job}}">Reuse prompt and files</a>{{end}}</nav><h1>Review {{.JobInfo.ID}} <span class="status">{{.JobInfo.Status}}</span></h1><p class="meta">{{.JobInfo.Provider}} · {{.JobInfo.Model}} · {{.Root}} · {{.JobInfo.InputTokens}} input tokens{{if .JobInfo.CachedTokens}} ({{.JobInfo.CachedTokens}} cached){{end}} · {{.JobInfo.OutputTokens}} output tokens</p>
+{{if eq .JobInfo.Status "running"}}<div class="notice" role="status"><strong>{{.Stage}}</strong>{{if .Progress.InputTokens}}<p>{{.Progress.InputTokens}} input · {{.Progress.OutputTokens}} output · {{.Progress.CachedTokens}} cached tokens</p>{{end}}<p>This page refreshes while Pipkin works.</p></div><script>setTimeout(()=>location.reload(),3000)</script>{{end}}
 {{if .JobInfo.LangfuseStatus}}<p class="meta">{{.JobInfo.LangfuseStatus}}</p>{{end}}
 {{if .JobInfo.ContextOmitted}}<details class="meta"><summary>{{len .JobInfo.ContextOmitted}} selected files omitted from model context</summary><ul>{{range .JobInfo.ContextOmitted}}<li>{{.}}</li>{{end}}</ul></details>{{end}}
 {{if .JobInfo.Unchanged}}<p class="notice">{{if .JobInfo.DraftChanged}}Agentic review returned to the original files.{{else}}The provider returned identical files.{{end}} There are no changes to apply.</p>{{end}}
 {{if .JobInfo.TextFallback}}<p class="meta">Pipkin used text edits after a hosted pass returned no archive or an unchanged draft.</p>{{end}}
 {{if .Prompt}}<details class="card"><summary>Original prompt</summary><pre style="white-space:pre-wrap">{{.Prompt}}</pre></details>{{end}}
 {{if .JobInfo.Agentic}}<p class="meta">Agentic delivery{{if .JobInfo.AgentProfile}} · {{.JobInfo.AgentProfile}}{{end}}</p>{{end}}
-{{if eq .JobInfo.Status "completed"}}<div class="bar"><span>{{.Approved}} approved</span><span>{{.Rejected}} rejected</span><span>{{.Pending}} pending</span><span>{{.Applied}} copied</span></div>
-<nav class="nav"><a href="/review?job={{.Job}}&amp;mode=submitted">Submitted ZIP vs returned ZIP</a> · <a href="/review?job={{.Job}}&amp;mode=current">Current workspace vs returned ZIP</a></nav>
-<div class="card"><div class="actions"><form class="inline" method="post" action="/decision"><input type="hidden" name="csrf" value="{{.Token}}"><input type="hidden" name="job" value="{{.Job}}"><input type="hidden" name="mode" value="{{.Mode}}"><button name="action" value="approve-all">Approve all</button> <button class="danger" name="action" value="reject-all">Reject all</button></form></div><p class="sub">Review every change before copying. Local conflicts will block the copy.</p></div>
-{{range .Files}}<section class="file"><div class="filehead"><h2>{{.Path}} <span class="status">{{.Status}}</span> <span class="status">{{if .Applied}}Copied{{else if .Decision}}{{.Decision}}{{else}}Pending{{end}}</span></h2><form method="post" action="/decision" class="actions"><input type="hidden" name="csrf" value="{{$.Token}}"><input type="hidden" name="job" value="{{$.Job}}"><input type="hidden" name="path" value="{{.Path}}"><input type="hidden" name="mode" value="{{$.Mode}}"><button name="action" value="approve" {{if .Applied}}disabled{{end}}>OK</button><button name="action" value="reject" class="danger" {{if .Applied}}disabled{{end}}>Reject</button><button name="action" value="reset" class="secondary" {{if .Applied}}disabled{{end}}>Reset</button></form></div><p class="meta">Workspace: {{.WorkspaceStatus}}</p><h3>{{if eq $.Mode "current"}}Current workspace{{else}}Submitted ZIP{{end}} → Returned ZIP</h3><pre class="unified-diff">{{range .Diff}}<span class="diff-line {{.Kind}}">{{.Text}}</span>{{end}}</pre></section>{{else}}<div class="card">No changed files.</div>{{end}}
-<div class="card"><h2>Copy approved changes into the working tree</h2><p class="sub">Rejected files remain untouched. Pipkin saves backups and checks the original hashes before writing anything.</p><form method="post" action="/copy"><input type="hidden" name="csrf" value="{{.Token}}"><input type="hidden" name="job" value="{{.Job}}"><label><input type="checkbox" required> I have reviewed these changes and wish to copy the approved files.</label><p><button type="submit" name="confirm" value="COPY" {{if gt .Pending 0}}disabled{{end}}>Copy approved changes</button></p></form>{{if gt .Pending 0}}<p class="meta">Decide on all {{.Pending}} pending files first.</p>{{end}}</div>
+{{if eq .JobInfo.Status "completed"}}<div class="review-tools"><div class="bar"><span>{{.Approved}} approved</span><span>{{.Rejected}} rejected</span><span>{{.Pending}} pending</span><span>{{.Applied}} copied</span></div>
+<nav class="nav"><a href="/review?job={{.Job}}&amp;mode=submitted">Submitted ZIP vs returned ZIP</a> · <a href="/review?job={{.Job}}&amp;mode=current">Current workspace vs returned ZIP</a>{{if .Files}} · <a href="#copy-changes">Go to copy</a>{{end}}</nav>
+{{if .Files}}<div class="toolbar"><label for="jump-file">Jump to file</label><select id="jump-file"><option value="">Choose a file</option>{{range .Files}}<option value="{{.Anchor}}">{{.Path}}</option>{{end}}</select><label><input type="checkbox" id="pending-only"> Pending only</label></div>{{end}}</div>
+{{if .Files}}<div class="card"><div class="actions"><form class="inline" method="post" action="/decision"><input type="hidden" name="csrf" value="{{.Token}}"><input type="hidden" name="job" value="{{.Job}}"><input type="hidden" name="mode" value="{{.Mode}}"><button name="action" value="approve-all">Approve all</button> <button class="danger" name="action" value="reject-all">Reject all</button></form></div><p class="sub">Review every change before copying. Local conflicts will block the copy.</p></div>
+{{range .Files}}<section class="file" id="{{.Anchor}}" data-decision="{{.Decision}}"><div class="filehead"><h2>{{.Path}} <span class="status">{{.Status}}</span> <span class="status">{{if .Applied}}Copied{{else if .Decision}}{{.Decision}}{{else}}Pending{{end}}</span></h2><form method="post" action="/decision" class="actions"><input type="hidden" name="csrf" value="{{$.Token}}"><input type="hidden" name="job" value="{{$.Job}}"><input type="hidden" name="path" value="{{.Path}}"><input type="hidden" name="mode" value="{{$.Mode}}"><button name="action" value="approve" class="{{if eq .Decision "approved"}}decision-current{{end}}" {{if .Applied}}disabled{{end}}>Approve</button><button name="action" value="reject" class="danger {{if eq .Decision "rejected"}}decision-current{{end}}" {{if .Applied}}disabled{{end}}>Reject</button><button name="action" value="reset" class="secondary" {{if .Applied}}disabled{{end}}>Reset</button></form></div><p class="meta">Workspace: {{.WorkspaceStatus}}</p><h3>{{if eq $.Mode "current"}}Current workspace{{else}}Submitted ZIP{{end}} → Returned ZIP</h3><pre class="unified-diff">{{range .Diff}}<span class="diff-line {{.Kind}}">{{.Text}}</span>{{end}}</pre></section>{{end}}
+<div class="card" id="copy-changes"><h2>Copy approved changes into the working tree</h2><p class="sub">Rejected files remain untouched. Pipkin saves backups and checks the original hashes before writing anything.</p><form method="post" action="/copy"><input type="hidden" name="csrf" value="{{.Token}}"><input type="hidden" name="job" value="{{.Job}}"><label><input type="checkbox" required> I have reviewed these changes and wish to copy the approved files.</label><p><button type="submit" name="confirm" value="COPY" {{if or (gt .Pending 0) (eq .ReadyToCopy 0)}}disabled{{end}}>Copy {{.ReadyToCopy}} approved files</button></p></form>{{if gt .Pending 0}}<p class="meta">Decide on all {{.Pending}} pending files first.</p>{{end}}</div>
+<script>
+const jump = document.getElementById('jump-file');
+const pendingOnly = document.getElementById('pending-only');
+if (jump) {
+  jump.onchange = () => {
+    const file = document.getElementById(jump.value);
+    if (!file) return;
+    if (file.hidden) { pendingOnly.checked = false; pendingOnly.onchange(); }
+    location.hash = file.id;
+  };
+  pendingOnly.onchange = () => {
+    document.querySelectorAll('.file[data-decision]').forEach(file => {
+      file.hidden = pendingOnly.checked && file.dataset.decision !== '';
+    });
+  };
+}
+</script>
+{{else}}<p class="card">No changed files.</p>{{end}}
 {{end}}{{end}}
 </main></body></html>{{end}}
-{{define "tree"}}{{if .Dir}}<details open><summary><label class="{{if .Ignored}}ignored{{end}}"><input type="checkbox" name="dir-toggle" value="{{.Rel}}" data-dir="1" {{if .Ignored}}data-ignored="1"{{end}} {{if .Selected}}checked{{end}}>{{.Name}}/</label></summary>{{range .Children}}{{template "tree" .}}{{end}}</details>{{else}}<label class="leaf {{if .Ignored}}ignored{{end}}"><input type="checkbox" name="files" value="{{.Rel}}" {{if .Ignored}}data-ignored="1"{{end}} {{if .Selected}}checked{{end}}>{{.Name}}{{if .Ignored}} (ignored){{end}}</label>{{end}}{{end}}
+{{define "tree"}}{{if .Dir}}<details><summary><label class="{{if .Ignored}}ignored{{end}}"><input type="checkbox" name="dir-toggle" value="{{.Rel}}" data-dir="1" {{if .Ignored}}data-ignored="1"{{end}} {{if .Selected}}checked{{end}}>{{.Name}}/</label> <a class="meta" href="/git?path={{.Rel}}" aria-label="Git history for {{.Rel}}">Git</a></summary>{{range .Children}}{{template "tree" .}}{{end}}</details>{{else}}<div class="leaf {{if .Ignored}}ignored{{end}}"><label><input type="checkbox" name="files" value="{{.Rel}}" {{if .Ignored}}data-ignored="1"{{end}} {{if .Selected}}checked{{end}}>{{.Name}}{{if .Ignored}} (ignored){{end}}</label> <a class="meta" href="/git?path={{.Rel}}" aria-label="Git history for {{.Rel}}">Git</a></div>{{end}}{{end}}

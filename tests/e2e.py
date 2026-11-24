@@ -10,6 +10,7 @@ from pathlib import Path
 import pty
 import re
 import select
+import shutil
 import socket
 import struct
 import subprocess
@@ -115,7 +116,7 @@ class PipkinEndToEnd(unittest.TestCase):
             "model": "test-model",
         }))
 
-    def start_provider(self, proposed=PROPOSED):
+    def start_provider(self, proposed=PROPOSED, release=None):
         fixture = io.BytesIO()
         with ZipFile(fixture, "w") as archive:
             for name, contents in proposed.items():
@@ -147,6 +148,9 @@ class PipkinEndToEnd(unittest.TestCase):
                         raise ValueError(f"Wrong ZIP contents: {list(contents)}")
                 except (KeyError, OSError, ValueError) as error:
                     self.send_error(400, str(error))
+                    return
+                if release is not None and not release.wait(timeout=TIMEOUT):
+                    self.send_error(504)
                     return
                 self.send_response(200)
                 self.send_header("Content-Type", "application/zip")
@@ -211,6 +215,54 @@ class PipkinEndToEnd(unittest.TestCase):
         self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
         self.assert_workspace(PROPOSED["alpha.txt"])
 
+    @unittest.skipUnless(shutil.which("git"), "Git unavailable")
+    def test_terminal_git_history_and_hidden_files(self):
+        def git(*args):
+            subprocess.run(
+                ["git", *args], cwd=self.project, env=self.env,
+                check=True, capture_output=True,
+            )
+
+        git("init", "-b", "main")
+        git("config", "user.name", "Pipkin Test")
+        git("config", "user.email", "pipkin@example.test")
+        git("add", ".")
+        git("commit", "-m", "Base")
+        git("update-ref", "refs/remotes/origin/main", "HEAD")
+        (self.project / "alpha.txt").write_text("Local alpha\n")
+        git("add", "alpha.txt")
+        git("commit", "-m", "Change alpha")
+        (self.project / ".github").mkdir()
+        (self.project / ".github" / "ci.yml").write_text("CI\n")
+
+        terminal = Terminal(self.start)
+        self.addCleanup(terminal.close)
+        terminal.expect("Parcel the otter")
+        terminal.send("g")
+        terminal.expect("GIT · alpha.txt")
+        terminal.expect("Change alpha")
+        terminal.send("\r")
+        terminal.expect("PIPKIN / DIFF")
+        terminal.expect("+Local alpha")
+        terminal.send("qq")
+        terminal.expect("Parcel the otter")
+        terminal.send("G")
+        terminal.expect("GIT · project (repository)")
+        terminal.send("u")
+        terminal.expect("Branch tip compared with origin/main")
+        terminal.expect("+Local alpha")
+        terminal.send("qqH")
+        terminal.expect(".github")
+        terminal.expect("Hidden files shown")
+        terminal.send("z")
+        terminal.expect("Saved:")
+        with ZipFile(self.output / "project.zip") as archive:
+            self.assertEqual(sorted(archive.namelist()), [
+                "alpha.txt", "beta.txt", "unselected.txt",
+            ])
+        terminal.send("q")
+        self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
+
     def test_terminal_advertises_agentic_shortcut(self):
         config = Path(self.env["PIPKIN_CONFIG"])
         config.write_text(json.dumps({"provider": "vllm", "model": "local-model"}))
@@ -241,7 +293,39 @@ class PipkinEndToEnd(unittest.TestCase):
         self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
         self.assert_workspace(ORIGINAL["alpha.txt"])
 
+    def test_terminal_switches_provider_and_cancels_prompt(self):
+        config = Path(self.env["PIPKIN_CONFIG"])
+        config.write_text(json.dumps({
+            "provider_profile": "alpha",
+            "provider_profiles": {
+                "alpha": {"provider": "openai", "model": "alpha-model"},
+                "beta": {"provider": "vllm", "model": "beta-model"},
+            },
+        }))
+        terminal = Terminal(self.start)
+        self.addCleanup(terminal.close)
+        terminal.expect("m Model")
+        terminal.send("m")
+        terminal.expect("PIPKIN / MODEL")
+        terminal.send("j\r")
+        terminal.expect("beta · vllm / beta-model")
+        terminal.send("p")
+        terminal.expect("Prompt (Enter send, Esc cancel)")
+        terminal.send("ñ")
+        terminal.expect("ñ")
+        terminal.send("\x1b")
+        terminal.expect("cancelled")
+        terminal.send("q")
+        self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
+
     def test_http_submit_review_and_copy(self):
+        release = threading.Event()
+        self.start_provider(release=release)
+        config = Path(self.env["PIPKIN_CONFIG"])
+        settings = json.loads(config.read_text())
+        settings["endpoint"] = f"http://127.0.0.1:{self.provider.server_port}/deliver"
+        config.write_text(json.dumps(settings))
+        self.addCleanup(release.set)
         with socket.socket() as reservation:
             reservation.bind(("127.0.0.1", 0))
             port = reservation.getsockname()[1]
@@ -250,7 +334,7 @@ class PipkinEndToEnd(unittest.TestCase):
         self.addCleanup(log.close)
         process = self.start("--web", stdout=log, stderr=log)
 
-        def request(path, form=None):
+        def request(path, form=None, location=False):
             connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
             try:
                 if form is None:
@@ -260,7 +344,7 @@ class PipkinEndToEnd(unittest.TestCase):
                         "Content-Type": "application/x-www-form-urlencoded",
                     })
                 response = connection.getresponse()
-                return response.status, response.read().decode()
+                return response.status, response.getheader("Location") if location else response.read().decode()
             finally:
                 connection.close()
 
@@ -282,17 +366,19 @@ class PipkinEndToEnd(unittest.TestCase):
         self.assertIsNotNone(token)
         form = {"csrf": token[1], "files": list(ORIGINAL), "prompt": PROMPT}
         self.assertEqual(request("/submit", dict(form, csrf="bad"))[0], 403)
-        self.assertEqual(request("/submit", form)[0], 303)
-
+        status, review_url = request("/submit", form, location=True)
+        self.assertEqual(status, 303)
+        self.assertTrue(review_url.startswith("/review?job="), review_url)
+        status, running = request(review_url)
+        self.assertEqual(status, 200)
+        self.assertIn("Sending to test-model", running)
+        self.assertIn(PROMPT, running)
+        release.set()
         deadline = time.monotonic() + TIMEOUT
         while True:
-            _, landing = request("/")
-            link = re.search(r'href="(/review\?job=[^"]+)"', landing)
-            if link:
-                review_url = link[1]
-                status, page = request(review_url)
-                if "2 pending" in page:
-                    break
+            status, page = request(review_url)
+            if "2 pending" in page:
+                break
             if time.monotonic() >= deadline:
                 log.seek(0)
                 self.fail(f"No completed web delivery: {log.read()!r}")
@@ -306,7 +392,16 @@ class PipkinEndToEnd(unittest.TestCase):
         job = parse_qs(urlsplit(review_url).query)["job"][0]
         review = {"csrf": token[1], "job": job}
         self.assertEqual(request("/copy", dict(review, confirm="COPY"))[0], 409)
-        self.assertEqual(request("/decision", dict(review, action="approve", path="alpha.txt"))[0], 303)
+        self.assertIn('id="jump-file"', page)
+        self.assertIn('id="pending-only"', page)
+        status, redirect = request("/decision", dict(review, action="approve", path="alpha.txt"), location=True)
+        self.assertEqual(status, 303)
+        self.assertTrue(redirect.endswith("#file-1"), redirect)
+        status, draft = request("/?" + urlencode({"from": job}))
+        self.assertEqual(status, 200)
+        self.assertIn(f">{PROMPT}</textarea>", draft)
+        self.assertRegex(draft, r'name="files" value="alpha\.txt"[^>]*checked')
+        self.assertNotRegex(draft, r'name="files" value="unselected\.txt"[^>]*checked')
         self.assertEqual(request("/decision", dict(review, action="reject", path="beta.txt"))[0], 303)
         self.assertEqual(request("/copy", review)[0], 400)
         self.assert_workspace(ORIGINAL["alpha.txt"])

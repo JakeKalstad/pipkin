@@ -6,10 +6,14 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { relativePaths, filePath } = require('./helpers');
 const { showReview } = require('./review');
-const { SessionsProvider } = require('./sessions');
+const { SessionsProvider, listSessions } = require('./sessions');
 
 const output = vscode.window.createOutputChannel('Pipkin');
 function settings() { return vscode.workspace.getConfiguration('pipkin'); }
+function providerArgs() {
+  const profile = settings().get('providerProfile')?.trim();
+  return profile ? ['--provider-profile', profile] : [];
+}
 function workspaceRoot(uri) {
   const folder = uri && vscode.workspace.getWorkspaceFolder(uri);
   if (folder) return filePath(folder.uri);
@@ -37,7 +41,7 @@ async function execPipkin(args, {cwd, input} = {}) {
     child.on('close', code => code === 0 ? resolve(stdout.trim()) : reject(new Error(stderr.trim() || `Pipkin exited with status ${code}`)));
   });
 }
-async function packagePaths(root, paths, mode, prompt) {
+async function packagePaths(root, paths, mode, prompt, agentic) {
   const relative = relativePaths(root, paths);
   if (!relative.length) throw new Error('No files selected.');
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'pipkin-ext-'));
@@ -53,6 +57,8 @@ async function packagePaths(root, paths, mode, prompt) {
       if (!prompt || !prompt.trim()) throw new Error('Prompt is required.');
       await fs.writeFile(promptFile, prompt);
       args.push('--prompt-file', promptFile);
+      if (agentic) args.push('--agentic');
+      args.push(...providerArgs());
     }
     args.push(root);
     if (mode === 'llm') { await runWorkflow(args, root); return; }
@@ -65,24 +71,63 @@ async function packagePaths(root, paths, mode, prompt) {
 }
 async function runWorkflow(args, root) {
   const executable = settings().get('executable') || 'pipkin';
-  let jobDir;
-  let usage;
-  await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:'Pipkin: processing ZIP',cancellable:true}, (progress,token) => new Promise((resolve,reject) => {
-    const child=spawn(executable,args,{shell:false,stdio:['ignore','pipe','pipe'],env:{...process.env, PIPKIN_OUTPUT_DIR: settings().get('outputDirectory') || path.join(os.homedir(),'pipkin','outputs')},cwd:root});
-    let pending='',stderr='',cancelled=false;
-    token.onCancellationRequested(() => {cancelled=true;child.kill('SIGTERM');});
-    child.stdout.on('data',chunk => {pending+=chunk.toString();let pos;while((pos=pending.indexOf('\n'))>=0){const line=pending.slice(0,pos);pending=pending.slice(pos+1);output.appendLine(line);try {const event=JSON.parse(line);if(event.type==='job') jobDir=event.job;if(event.type==='status')progress.report({message:event.message});if(event.type==='usage') usage=event;if(event.type==='error')stderr=event.message;}catch{}}});
-    child.stderr.on('data',chunk=>{stderr+=chunk.toString();output.append(chunk.toString());});
-    child.on('error',reject);
-    child.on('close',code=>code===0?resolve():reject(new Error(cancelled?'Request cancelled':stderr||`Pipkin exited ${code}`)));
-  }));
+  let jobDir, usage, completion;
+  try {
+    await vscode.window.withProgress(
+      {location:vscode.ProgressLocation.Notification, title:'Pipkin: preparing delivery', cancellable:true},
+      (progress, token) => new Promise((resolve, reject) => {
+        const child = spawn(executable, args, {
+          shell:false, stdio:['ignore','pipe','pipe'], cwd:root,
+          env:{...process.env, PIPKIN_OUTPUT_DIR: settings().get('outputDirectory') || path.join(os.homedir(),'pipkin','outputs')}
+        });
+        let pending = '', stderr = '', cancelled = false;
+        const cancellation = token.onCancellationRequested(() => {
+          cancelled = true;
+          child.kill('SIGTERM');
+        });
+        child.stdout.setEncoding('utf8');
+        child.stdout.on('data', chunk => {
+          pending += chunk;
+          let position;
+          while ((position = pending.indexOf('\n')) >= 0) {
+            const line = pending.slice(0, position);
+            pending = pending.slice(position + 1);
+            output.appendLine(line);
+            let event;
+            try { event = JSON.parse(line); } catch { continue; }
+            switch (event.type) {
+              case 'job': jobDir = event.job; break;
+              case 'status': progress.report({message:event.message}); break;
+              case 'usage': usage = event; break;
+              case 'complete': completion = event.message; break;
+              case 'error': stderr = event.message; break;
+            }
+          }
+        });
+        child.stderr.on('data', chunk => { stderr += chunk.toString(); output.append(chunk.toString()); });
+        child.on('error', err => { cancellation.dispose(); reject(err); });
+        child.on('close', code => {
+          cancellation.dispose();
+          if (code === 0) resolve();
+          else reject(new Error(cancelled ? 'Request cancelled' : stderr || `Pipkin exited ${code}`));
+        });
+      })
+    );
+  } catch (err) {
+    if (!jobDir) throw err;
+    const action = await vscode.window.showWarningMessage(`Pipkin: ${err.message}`, 'Open delivery', 'Show log');
+    if (action === 'Open delivery') await showReview(executable, jobDir, output);
+    if (action === 'Show log') output.show();
+    return;
+  } finally {
+    await vscode.commands.executeCommand('pipkin.refreshSessions');
+  }
   if (!jobDir) throw new Error('Workflow completed without a saved job directory.');
   const summary=usage?` — ${usage.input_tokens} input / ${usage.output_tokens} output tokens`:'';
   output.appendLine(`Completed ${jobDir}${summary}`);
-  const choice=await vscode.window.showInformationMessage(`Pipkin returned a ZIP${summary}`,'Review changes','Reveal result');
+  const choice=await vscode.window.showInformationMessage(`${completion || 'Pipkin returned a ZIP'}${summary}`,'Review changes','Reveal result');
   if(choice==='Review changes') await showReview(executable,jobDir,output);
   if(choice==='Reveal result') await vscode.commands.executeCommand('revealFileInOS',vscode.Uri.file(path.join(jobDir,'result.zip')));
-  await vscode.commands.executeCommand('pipkin.refreshSessions');
 }
 function explorerPaths(uri, selectedUris) {
   const picked = Array.isArray(selectedUris) && selectedUris.length ? selectedUris : uri ? [uri] : [];
@@ -97,9 +142,22 @@ async function fromExplorer(uri, selectedUris, mode) {
     picked.push(editor.document.uri);
   }
   const root = workspaceRoot(picked[0]);
-  const prompt = mode === 'llm' ? await vscode.window.showInputBox({title:'Instructions for LLM', prompt:'What should the model change in these files?', ignoreFocusOut:true, validateInput: v => v.trim() ? null : 'A prompt is required'}) : undefined;
-  if (mode === 'llm' && prompt === undefined) return;
-  await packagePaths(root, picked.map(filePath), mode, prompt);
+  let prompt, agentic;
+  if (mode === 'llm') {
+    const choice = await vscode.window.showQuickPick([
+      {label:'Standard', description:'One model pass', agentic:false},
+      {label:'Agentic', description:'Draft and review passes', agentic:true}
+    ], {placeHolder:'Choose how Pipkin should prepare the delivery'});
+    if (!choice) return;
+    agentic = choice.agentic;
+    prompt = await vscode.window.showInputBox({
+      title:`Pipkin: ${choice.label} delivery`,
+      prompt:`What should the model change in the ${picked.length} selected items?`,
+      ignoreFocusOut:true, validateInput:value => value.trim() ? null : 'A prompt is required'
+    });
+    if (prompt === undefined) return;
+  }
+  await packagePaths(root, picked.map(filePath), mode, prompt, agentic);
 }
 async function zipOpenEditors() {
   const paths = [];
@@ -129,7 +187,7 @@ async function askSelection() {
   };
   const reply = await vscode.window.withProgress(
     {location:vscode.ProgressLocation.Notification, title:'Pipkin: asking LLM about selection', cancellable:false},
-    () => execPipkin(['--snippet'], {cwd: root, input: JSON.stringify(request)})
+    () => execPipkin([...providerArgs(), '--snippet'], {cwd: root, input: JSON.stringify(request)})
   );
   const doc = await vscode.workspace.openTextDocument({language:'markdown', content:`# Pipkin response\n\n**Prompt:** ${prompt}\n\n**File:** ${editor.document.fileName}\n\n---\n\n${reply}\n`});
   await vscode.window.showTextDocument(doc, {preview:false, viewColumn:vscode.ViewColumn.Beside});
@@ -161,12 +219,13 @@ function activate(context) {
   });
   register('pipkin.reviewLast', async () => {
     const root=workspaceRoot(vscode.window.activeTextEditor?.document.uri || vscode.workspace.workspaceFolders?.[0]?.uri);
-    const folder=path.join(settings().get('outputDirectory') || path.join(os.homedir(),'pipkin','outputs'),'jobs',path.basename(root));
-    const entries=await fs.readdir(folder,{withFileTypes:true});
-    const names=entries.filter(e=>e.isDirectory()).map(e=>e.name).sort().reverse();
-    if(!names.length) throw new Error('No Pipkin sessions found.');
-    const chosen=await vscode.window.showQuickPick(names,{placeHolder:'Choose a Pipkin session to review'});
-    if(chosen) await showReview(settings().get('executable')||'pipkin',path.join(folder,chosen),output);
+    const jobs = await listSessions(root, settings().get('outputDirectory'));
+    if (!jobs.length) throw new Error('No Pipkin sessions found.');
+    const chosen = await vscode.window.showQuickPick(jobs.map(({dir, job}) => ({
+      label: job.id, description: `${job.status} · ${job.model || job.provider}`,
+      detail: job.created, dir
+    })), {placeHolder:'Choose a Pipkin delivery'});
+    if (chosen) await showReview(settings().get('executable') || 'pipkin', chosen.dir, output);
   });
 }
 function deactivate() { output.dispose(); }

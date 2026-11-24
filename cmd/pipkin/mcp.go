@@ -194,19 +194,7 @@ func mcpCallTool(call mcpCall) (any, error) {
 	}
 }
 func filesFromPaths(root string, paths []string) ([]*Node, error) {
-	tmp, err := os.CreateTemp("", "pipkin-manifest-*.json")
-	if err != nil {
-		return nil, err
-	}
-	defer os.Remove(tmp.Name())
-	if err = json.NewEncoder(tmp).Encode(paths); err != nil {
-		tmp.Close()
-		return nil, err
-	}
-	if err = tmp.Close(); err != nil {
-		return nil, err
-	}
-	return filesFromJSON(root, tmp.Name())
+	return selectPaths(root, paths, false)
 }
 func mcpListJobs(root string) ([]string, error) {
 	base := filepath.Join(outputDirectory(), "jobs", filepath.Base(root))

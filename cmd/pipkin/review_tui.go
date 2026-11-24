@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -160,7 +161,7 @@ func reviewSessionPaths(root string) ([]string, error) {
 			continue
 		}
 		var job WorkflowJob
-		if json.Unmarshal(b, &job) != nil || job.Root != root || job.Status != "completed" {
+		if json.Unmarshal(b, &job) != nil || job.Root != root {
 			continue
 		}
 		when, _ := time.Parse(time.RFC3339, job.Created)
@@ -194,27 +195,30 @@ func (a *App) reviewTUI(r *bufio.Reader) error {
 		return err
 	}
 	if len(sessions) == 0 {
-		return errors.New("no completed sessions; press p to submit code first")
+		return errors.New("no deliveries yet; press p to submit code")
 	}
 	index := 0
+	jobs := make([]WorkflowJob, len(sessions))
+	completed := 0
+	for i, session := range sessions {
+		data, err := os.ReadFile(filepath.Join(session, "job.json"))
+		if err == nil && json.Unmarshal(data, &jobs[i]) == nil && jobs[i].Status == "completed" {
+			completed++
+		}
+	}
 	for {
 		h, _ := size()
 		lines := []string{" PIPKIN / PARCEL HISTORY", " ↑↓ choose  Enter inspect  q return", strings.Repeat("─", 65)}
 		start := max(0, index-max(1, h-8)+1)
-		for i := start; i < len(sessions) && len(lines) < h-3; i++ {
-			b, err := os.ReadFile(filepath.Join(sessions[i], "job.json"))
-			if err != nil {
-				continue
-			}
-			var j WorkflowJob
-			_ = json.Unmarshal(b, &j)
+		for i := start; i < len(jobs) && len(lines) < h-3; i++ {
+			job := jobs[i]
 			marker := "  "
 			if i == index {
 				marker = "> "
 			}
-			lines = append(lines, fmt.Sprintf("%s%s  %s  %s  %s", marker, j.ID, j.Created, j.Provider, j.Model))
+			lines = append(lines, safeDisplayLine(fmt.Sprintf("%s%s  [%s]  %s  %s", marker, job.ID, job.Status, job.Created, job.Model)))
 		}
-		lines = append(lines, "", fmt.Sprintf(" %d completed deliveries", len(sessions)))
+		lines = append(lines, "", fmt.Sprintf(" %d completed deliveries · %d total", completed, len(sessions)))
 		screenLines(lines)
 		switch readKey(r) {
 		case "q", "esc", "b":
@@ -228,7 +232,38 @@ func (a *App) reviewTUI(r *bufio.Reader) error {
 				index++
 			}
 		case "enter":
-			if err := runReviewScreen(r, sessions[index]); err != nil {
+			dir := sessions[index]
+			data, err := os.ReadFile(filepath.Join(dir, "job.json"))
+			if err != nil {
+				return err
+			}
+			var job WorkflowJob
+			if err := json.Unmarshal(data, &job); err != nil {
+				return err
+			}
+			if job.Status != "completed" {
+				lines := []string{" PIPKIN / " + strings.ToUpper(job.Status), " Delivery: " + job.ID, " Model: " + job.Model}
+				if job.Error != "" {
+					_, width := size()
+					words := strings.Fields(safeDisplayLine(job.Error))
+					line := " "
+					for _, word := range words {
+						if utf8.RuneCountInString(line+" "+word) > width {
+							lines = append(lines, line)
+							line = " "
+						}
+						line += word + " "
+					}
+					lines = append(lines, line)
+				}
+				if prompt := savedPrompt(dir); prompt != "" {
+					lines = append(lines, " Prompt: "+safeDisplayLine(strings.Join(strings.Fields(prompt), " ")))
+				}
+				screenLines(append(lines, "", " Press any key to return"))
+				readKey(r)
+				continue
+			}
+			if err := runReviewScreen(r, dir); err != nil {
 				return err
 			}
 		}
@@ -475,37 +510,41 @@ func screenLinesANSI(lines []string) {
 	fmt.Fprint(os.Stdout, b.String())
 }
 func showFullDiff(r *bufio.Reader, f ReviewFile, mode string) {
-	lines := diffLines(f, mode)
+	showDiffPager(r, f.Path, diffLines(f, mode), func() []string {
+		if mode == "submitted" {
+			mode = "current"
+		} else {
+			mode = "submitted"
+		}
+		return diffLines(f, mode)
+	})
+}
+
+func showDiffPager(r *bufio.Reader, title string, lines []string, toggle func() []string) {
 	scroll := 0
+	hint := " ↑↓ scroll  q back"
+	if toggle != nil {
+		hint = " ↑↓ scroll  v toggle mode  q back"
+	}
 	for {
 		h, w := size()
 		height := max(1, h-4)
-		out := []string{" PIPKIN / DIFF: " + f.Path, " ↑↓ scroll  v toggle mode  q back", strings.Repeat("─", w)}
-		for i := 0; i < height; i++ {
-			if scroll+i < len(lines) {
-				out = append(out, coloredDiff(trunc(safeDisplayLine(lines[scroll+i]), w)))
-			}
+		out := []string{trunc(" PIPKIN / DIFF: "+safeDisplayLine(title), w), hint, strings.Repeat("─", w)}
+		for i := scroll; i < min(len(lines), scroll+height); i++ {
+			out = append(out, coloredDiff(trunc(safeDisplayLine(lines[i]), w)))
 		}
 		screenLinesANSI(out)
 		switch readKey(r) {
 		case "q", "b", "esc", "enter":
 			return
 		case "up", "k":
-			if scroll > 0 {
-				scroll--
-			}
+			scroll = max(0, scroll-1)
 		case "down", "j":
-			if scroll < max(0, len(lines)-height) {
-				scroll++
-			}
+			scroll = min(max(0, len(lines)-height), scroll+1)
 		case "v":
-			if mode == "submitted" {
-				mode = "current"
-			} else {
-				mode = "submitted"
+			if toggle != nil {
+				lines, scroll = toggle(), 0
 			}
-			lines = diffLines(f, mode)
-			scroll = 0
 		}
 	}
 }

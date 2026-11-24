@@ -19,6 +19,27 @@ Yes, this does involve reading a diff. We appreciate your patience with this leg
 
 ![Pipkin landing screen](images/landing.png)
 
+## Day-to-day workflow
+
+- **Web:** Filter file paths, select the files you want, and choose a provider profile for the delivery. Submitting opens the saved job and shows progress. In review, jump to a file, show pending files, or reuse a delivery’s prompt and selection in a new draft.
+- **Terminal:** Press `m` to switch between configured provider profiles for the current session. Press `r` to open delivery history, including failed attempts and their error details.
+- **VSCodium:** **Send Selected Files to LLM** lets you choose Standard or Agentic. Set `pipkin.providerProfile` to use a specific profile for editor requests. **Pipkin Deliveries** lists jobs for the active workspace in newest-first order. Open a job to revisit its prompt, diff, or error.
+
+### Hidden files
+
+The terminal and web pickers hide dotfiles and dot-directories by default. A parent-directory selection also skips hidden descendants. To edit CI files, press `H` in the terminal or click **Show hidden files** in the web picker, then select `.github` or the specific files you need. For CLI manifests, pass `--show-hidden` and list the desired hidden paths explicitly. Pipkin always excludes `.git` and private `.env` files from selections and archives. Environment templates such as `.env.example` require the same opt-in as other dotfiles.
+
+### Git history
+
+Press `g` on a file or folder in the terminal picker, or `G` anywhere in the picker for the entire repository. In the browser, click **Git** next to a path or **Repository Git history** above the picker.
+
+- Select a commit to see its patch. In the terminal, press **Enter**.
+- Choose **Local commits** (`l`) for commits the upstream branch does not contain.
+- Choose **Upstream diff** (`u`) to compare the upstream tip with your local branch tip.
+- Choose **Working diff** (`w`) for staged and unstaged changes to tracked files.
+
+Pipkin reads the locally available upstream ref and falls back to `origin/<current-branch>` if present. These views are read-only and use the 100 most recent matching commits.
+
 ## Build and install
 
 ```sh
@@ -363,8 +384,9 @@ Start with `pipkin --web` and the loopback `LISTEN_URL` shown above. These endpo
 
 | Method and path | Parameters | Behaviour |
 | --- | --- | --- |
-| `GET /` | — | Show the workspace file picker and saved deliveries. |
-| `POST /submit` | `prompt`, repeated `files` fields, optional `agentic=1` | Start a delivery in the background. Refresh the landing page for its status. |
+| `GET /` | Optional `hidden=1` | Show the workspace file picker and saved deliveries. |
+| `GET /git` | Optional `path`, `local=1`, `diff=upstream\|working\|commit`, `commit` (full object ID) | Show scoped Git history or a read-only patch. |
+| `POST /submit` | `prompt`, repeated `files` fields, optional `agentic=1` and `show_hidden=1` | Start a delivery in the background. Refresh the landing page for its status. |
 | `GET /review` | `job`, optional `mode=submitted\|current` | Show delivery status or compare the result with the submitted ZIP or current workspace. The default is `submitted`. |
 | `POST /decision` | `job`, `action`, `path` for a single file, optional `mode` | Save a decision. Actions are `approve`, `reject`, `reset`, `approve-all`, and `reject-all`. |
 | `POST /copy` | `job`, `confirm=COPY` | Copy approved files into the working tree. Returns `409` if a decision is pending or a workspace conflict blocks copying. |
@@ -443,6 +465,19 @@ Add these fields to your existing provider configuration. Use the absolute path 
   }
 }
 ```
+
+Pipkin ships two LangGraph presets you can use without writing a profile. Install LangGraph first, then select one:
+
+```sh
+pipkin --agent-profile focused
+pipkin --agent-profile thorough
+```
+
+**Focused** runs a draft and one review with up to 4 KiB of original-file references for text models. **Thorough** allows two reviews and up to 8 KiB of references. A no-change review ends remaining model calls. The actual reference allowance is also capped at one eighth of the text context budget. Pipkin sends original versions of changed text files that fit within that allowance. Hosted review can compare the full original and candidate archives.
+
+Both profiles use Pipkin’s `engineering-v1` prompts. The draft instructions prioritize focused edits, existing conventions, and compatibility. The reviewer checks the candidate against the task and the evidence available. Hosted archive passes may run focused checks in the interpreter. Local text passes inspect the supplied code and cannot run project tests. The saved job records the selected profile and prompt preset.
+
+For custom profiles, `draft_focus` and `review_focus` add project-specific instructions. Set `review_context_bytes` to 0–16384 for optional original-file references in text review. For example, use `"draft_focus": "Preserve public API signatures."` and `"review_focus": "Check cancellation and error paths."`.
 
 Edit `agent_profiles` to add or update named profiles. Each LangGraph profile runs one draft followed by up to three review passes. Additional passes use the preceding revision and can incur additional model usage. Use `pipkin --agent-profiles` to list profiles and see which is active. Set `PIPKIN_AGENT_PROFILE=thorough` in your environment or pass `--agent-profile thorough` for one process. Select `builtin` to return to the built-in runner. The chosen profile applies to agentic submissions in the TUI, web UI, CLI, and MCP.
 
