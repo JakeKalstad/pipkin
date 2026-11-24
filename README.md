@@ -31,7 +31,144 @@ Download a Linux or macOS binary from [GitHub Releases](https://github.com/JakeK
 curl -fsSL https://github.com/JakeKalstad/pipkin/releases/latest/download/install.sh | sh
 ```
 
-For a browser-based setup, run `docker compose up -d pipkin` from the repository checkout. See [Deploy Pipkin](deploy/README.md) for mounting a workspace, building locally, and adding vLLM, LangGraph, or Langfuse.
+For a browser-based setup, use the [Docker Compose cheat sheet](#docker-compose-cheat-sheet) below.
+
+## Docker Compose cheat sheet
+
+Run these commands from the Pipkin checkout with Docker Compose 2.30 or later. The default web UI is <http://127.0.0.1:8787>. The host port is bound to loopback. The optional vLLM container requires an NVIDIA GPU and NVIDIA Container Toolkit.
+
+### 1. Choose the workspace and provider
+
+In the **Pipkin checkout’s** `.env`, set the workspace you want to edit. If you’re happy using the checkout itself, leave `PIPKIN_WORKSPACE` unset.
+
+```dotenv
+PIPKIN_WORKSPACE=/absolute/path/to/your/project
+PIPKIN_PORT=8787
+PIPKIN_UID=1000
+PIPKIN_GID=1000
+```
+
+On Linux, use `id -u` and `id -g` to find the IDs for your user. Compose mounts the project at `/workspace` and saves deliveries in its `.pipkin/outputs` directory.
+
+For named profiles, put `config.json` in the checkout’s `deploy/` directory or set `PIPKIN_CONFIG_DIR` to the host directory containing it. Set `PIPKIN_PROVIDER_PROFILE=claude` (or another profile name) in the checkout’s `.env` and add the provider key there. When no named profile is selected, use `PIPKIN_PROVIDER`, `PIPKIN_BASE_URL`, and `PIPKIN_MODEL` instead. See [Switch between model providers](#switch-between-model-providers) for complete profiles and key names. For a separate runtime environment file, set `PIPKIN_DOCKER_ENV` to its path.
+
+### 2. Pick a stack
+
+| Run | Command |
+| --- | --- |
+| Pipkin from source, with a hosted provider or existing reachable inference endpoint | `docker compose up -d --build pipkin` |
+| Pipkin from the published GHCR image | `docker compose pull pipkin` then `docker compose up -d --no-build pipkin` |
+| Pipkin without LangGraph dependencies | `PIPKIN_WITH_LANGGRAPH=false docker compose up -d --build pipkin` |
+| Pipkin + bundled vLLM | `docker compose --profile vllm up -d --build pipkin vllm` |
+| Pipkin + local Langfuse | `pipkin_lf up -d --build pipkin langfuse-web langfuse-worker` |
+| Pipkin + local Langfuse + vLLM | `pipkin_lf --profile vllm up -d --build pipkin langfuse-web langfuse-worker vllm` |
+
+The GHCR command requires a published image. Set `PIPKIN_IMAGE` to a specific GHCR tag if you want a pinned build. The final two rows use the shell function defined below. LangGraph can be enabled on any row except the explicitly slim build.
+
+### vLLM in Compose or on another machine
+
+For bundled vLLM, add the following to the checkout’s `.env`:
+
+```dotenv
+VLLM_MODEL=Qwen/Qwen3-0.6B
+VLLM_MAX_MODEL_LEN=8192
+PIPKIN_PROVIDER=vllm
+PIPKIN_BASE_URL=http://vllm:8000/v1
+PIPKIN_MODEL=Qwen/Qwen3-0.6B
+```
+
+If using a named profile, set its model and base URL to these values. Watch `docker compose logs -f vllm` until the model is loaded. The bundled vLLM port is internal to the Compose network. Its downloaded model weights persist in a volume.
+
+For an existing server, use the **Pipkin-only** command and set the endpoint to an address the container can reach. In a container, `127.0.0.1` refers to that container. For an existing vLLM on the same host, Docker Desktop provides `host.docker.internal`. On Linux, you can create a small `compose.host.yaml` overlay to add the host-gateway name:
+
+```yaml
+services:
+  pipkin:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+```
+
+Start with `docker compose -f compose.yaml -f compose.host.yaml up -d --build pipkin` and set the profile URL to `http://host.docker.internal:9999/v1` if your server uses port 9999. The host model server must listen on an address reachable from Docker. Keep its port restricted to the networks that need it.
+
+### Enable LangGraph
+
+LangGraph runs inside the Pipkin container. For a source build with the default options or the published image, merge [the LangGraph profile example](deploy/config.langgraph.example.json) into your mounted `config.json`. Remove any host-specific `langgraph_python` path or set it to `/opt/langgraph/bin/python`. Select **Agentic mode** when submitting in the web UI.
+
+```sh
+docker compose exec pipkin python3 -c 'from langgraph.graph import StateGraph'
+docker compose exec pipkin pipkin --agent-profiles
+```
+
+### Connect Langfuse or run it locally
+
+For an existing HTTPS instance, set `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_SECRET_KEY` in Pipkin’s runtime environment. Use the Pipkin-only or vLLM row above.
+
+For a local stack, download the upstream Compose file and generate its infrastructure credentials once. The following uses `openssl` and keeps those credentials in a separate file:
+
+```sh
+mkdir -p deploy
+touch .env
+curl -fsSLo deploy/langfuse.upstream.yaml \
+  https://raw.githubusercontent.com/langfuse/langfuse/v4.85.0/docker-compose.yml
+
+if [ ! -e .env.langfuse ]; then
+  (
+    set -eu
+    umask 077
+    postgres=$(openssl rand -hex 24)
+    minio=$(openssl rand -hex 24)
+    cat > .env.langfuse <<EOF_INNER
+LANGFUSE_IMAGE_TAG=4.85.0
+NEXTAUTH_URL=http://localhost:3000
+NEXTAUTH_SECRET=$(openssl rand -hex 32)
+SALT=$(openssl rand -hex 32)
+ENCRYPTION_KEY=$(openssl rand -hex 32)
+POSTGRES_PASSWORD=$postgres
+DATABASE_URL=postgresql://postgres:$postgres@postgres:5432/postgres
+CLICKHOUSE_PASSWORD=$(openssl rand -hex 24)
+REDIS_AUTH=$(openssl rand -hex 24)
+MINIO_ROOT_PASSWORD=$minio
+LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY=$minio
+LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY=$minio
+LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY=$minio
+EOF_INNER
+  )
+fi
+
+pipkin_lf() {
+  docker compose --env-file .env --env-file .env.langfuse \
+    -f compose.yaml -f deploy/langfuse.upstream.yaml -f compose.langfuse.yaml "$@"
+}
+
+pipkin_lf up -d --build pipkin langfuse-web langfuse-worker
+pipkin_lf ps
+```
+
+Open <http://localhost:3000>, create a project and its API keys, then add `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` to the Pipkin runtime environment file. Omit `langfuse_url` from the mounted JSON when using the overlay. The overlay supplies `http://langfuse-web:3000` inside Docker and shows a loopback link in the UI. Recreate Pipkin to pick up the keys:
+
+```sh
+pipkin_lf up -d --no-deps --force-recreate pipkin
+```
+
+For the full stack with vLLM, also add the vLLM settings above, then run:
+
+```sh
+pipkin_lf --profile vllm up -d --build pipkin vllm langfuse-web langfuse-worker
+pipkin_lf --profile vllm logs -f pipkin vllm langfuse-web
+```
+
+### Check, restart, or stop
+
+```sh
+docker compose ps
+docker compose logs --tail=100 pipkin
+curl -fsS -o /dev/null http://127.0.0.1:8787/
+docker compose exec pipkin pipkin --provider-profiles
+docker compose up -d --force-recreate pipkin
+docker compose --profile vllm down
+```
+
+For the Langfuse stack, use `pipkin_lf` in place of `docker compose` with the same profile you started. After a delivery, look for **Langfuse accepted the trace export** in the Pipkin review. If the project picker shows the wrong files, check `PIPKIN_WORKSPACE`. If copying reports permission errors, check the configured UID and GID. Plain `down` keeps model and Langfuse data volumes. Adding `-v` deletes those volumes.
 
 ## Quick start with a local model
 
