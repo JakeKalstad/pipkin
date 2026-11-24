@@ -69,4 +69,4 @@ Download an archive from [GitHub Releases](https://github.com/JakeKalstad/pipkin
 curl -fsSL https://github.com/JakeKalstad/pipkin/releases/latest/download/install.sh | sh
 ```
 
-You can also download and inspect the script first, then run `sh install.sh`. Set `PIPKIN_VERSION=v0.12.0` for a specific published tag or `PIPKIN_INSTALL_DIR=/your/bin` to change the destination. When piping, put those variables on the `sh` side, for example `curl ... | PIPKIN_VERSION=v0.12.0 sh`. The installer verifies the release asset’s checksum before installing and uses no sudo. The binary installer does not install the editor extension.
+You can also download and inspect the script first, then run `sh install.sh`. Set `PIPKIN_VERSION=v0.13.0` for a specific published tag or `PIPKIN_INSTALL_DIR=/your/bin` to change the destination. When piping, put those variables on the `sh` side, for example `curl ... | PIPKIN_VERSION=v0.13.0 sh`. The installer verifies the release asset’s checksum before installing and uses no sudo. The binary installer does not install the editor extension.

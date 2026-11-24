@@ -2,7 +2,7 @@
   "name": "pipkin",
   "displayName": "Pipkin — ZIP Courier",
   "description": "Parcel the otter delivers selected code to an LLM and brings back reviewable ZIPs.",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "publisher": "pipkin-local",
   "license": "MPL-2.0",
   "repository": {

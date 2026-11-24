@@ -1,0 +1,46 @@
+{{define "help"}}
+<h1>Help</h1>
+<nav class="toolbar" aria-label="Help topics"><a href="#setup">Setup</a><a href="#usage">Usage</a><a href="#http">HTTP API</a><a href="#mcp">MCP</a></nav>
+<section class="card" id="setup"><h2>Setup</h2>
+<p>Build the executable with <code>make build</code> from the source directory. Configure a provider in <code>~/.config/pipkin/.env</code> or set the corresponding environment variables. For example, an OpenAI-compatible text provider uses the following settings.</p>
+<pre>PIPKIN_PROVIDER=openai
+PIPKIN_BASE_URL=https://api.openai.com/v1
+PIPKIN_MODEL=your-model-id
+PIPKIN_API_KEY_ENV=OPENAI_API_KEY
+LISTEN_URL=http://127.0.0.1:8787</pre>
+<p>Supply the named API key to the Pipkin process and run <code>pipkin --web /path/to/project</code>. Run <code>pipkin /path/to/project</code> for the terminal picker. Provider and agent profiles can be set in <code>~/.config/pipkin/config.json</code> or in the file specified by <code>PIPKIN_CONFIG</code>.</p>
+</section>
+<section class="card" id="usage"><h2>Usage</h2>
+<p>For a text-only answer, open <a href="/prompt">Free prompt</a> or press <kbd>f</kbd> in the TUI. Use the history list to start or return to a conversation. In the TUI, press Enter to open, n for a new conversation, and d then Y to delete. In the composer, Enter adds a line, Ctrl+S sends, Ctrl+T opens the transcript, and Esc returns to history.</p>
+<ol><li>Select the files and folders the provider should receive.</li><li>Enter the change you want. Use Agentic mode for a draft followed by one or more review passes.</li><li>Review the changes and approve individual files before copying them into the workspace.</li></ol>
+<p>Pipkin loads root <code>AGENTS.md</code> by default. Open <a href="/instructions">Instructions</a> to edit it, create or enable skills under <code>.agents/skills/&lt;name&gt;/SKILL.md</code>, or add a workspace prompt and explicit Markdown paths. The terminal picker opens the instruction editor with <kbd>I</kbd>. The CLI accepts repeated <code>--instructions path.md</code> flags.</p>
+<pre>pipkin --workflow --agentic --files-from files.json \
+  --prompt-file task.txt --instructions AGENTS.md .</pre>
+<p><code>files.json</code> is a JSON array of project-relative file or folder paths. The task goes in <code>task.txt</code>. System instructions guide the work alongside Pipkin's output and tool constraints.</p></section>
+<section class="card" id="http"><h2>HTTP API</h2>
+<p>The local web interface serves HTML. POST requests use URL-encoded form fields and the <code>csrf</code> token from the relevant page. Delivery and instruction mutations redirect with HTTP 303. Free prompts return replies directly when the client requests JSON. Use repeated form fields for file selections and per-delivery instruction files.</p>
+<dl>
+<dt><code>GET /</code></dt><dd>File picker and deliveries. Use <code>hidden=1</code> to reveal eligible dotfiles or <code>from=PROJECT/JOB-ID</code> to reuse a task and selection.</dd>
+<dt><code>GET /about</code> and <code>GET /help</code></dt><dd>Build and workspace metadata and this reference.</dd>
+<dt><code>GET /prompt</code> and <code>POST /prompt</code></dt><dd>GET lists conversations or opens the transcript named by <code>conversation</code>. POST accepts <code>prompt</code> and optional <code>conversation</code>, <code>provider_profile</code>, <code>system_prompt</code>, and repeated <code>instruction_files</code>. Use <code>action=delete</code> with a conversation ID to delete it. With <code>Accept: application/json</code>, POST returns <code>reply</code> and <code>conversation</code> for a prompt, or <code>deleted</code> for deletion.</dd>
+<dt><code>GET /instructions</code> and <code>POST /instructions</code></dt><dd>Read or save workspace guidance. POST accepts <code>system_prompt</code> and a newline-separated <code>instruction_files</code> field, and optional <code>skip_project_instructions=1</code>.</dd>
+<dt><code>GET /instructions/edit</code> and <code>POST /instructions/edit</code></dt><dd>GET accepts <code>path</code> or a new <code>skill</code> name. POST accepts <code>path</code> and <code>markdown</code>, or <code>path</code> and <code>action=toggle</code> to enable or disable a skill.</dd>
+<dt><code>POST /submit</code></dt><dd>Accepts <code>prompt</code>, repeated <code>files</code>, and optional <code>provider_profile</code>, <code>agentic=1</code>, <code>show_hidden=1</code>, <code>system_prompt</code>, and repeated <code>instruction_files</code>. Starts a delivery and redirects to its review.</dd>
+<dt><code>GET /review</code></dt><dd>Accepts <code>job=PROJECT/JOB-ID</code> and optional <code>mode=submitted</code> or <code>mode=current</code>.</dd>
+<dt><code>POST /decision</code></dt><dd>Accepts <code>job</code>, <code>action</code>, <code>path</code> for single-file decisions, and optional <code>mode</code>. Actions are <code>approve</code>, <code>reject</code>, <code>reset</code>, <code>approve-all</code>, and <code>reject-all</code>.</dd>
+<dt><code>POST /copy</code></dt><dd>Accepts <code>job</code> and <code>confirm=COPY</code>. Pending decisions or workspace conflicts return HTTP 409.</dd>
+<dt><code>GET /git</code></dt><dd>Read-only repository history or patch. Accepts optional <code>path</code>, <code>local=1</code>, <code>diff</code> (<code>upstream</code>, <code>working</code>, or <code>commit</code>), and a full <code>commit</code> object ID for a commit patch.</dd>
+</dl></section>
+<section class="card" id="mcp"><h2>MCP</h2>
+<p>Configure your MCP client to launch the Pipkin executable over stdio with the argument <code>--mcp</code>. Configure the provider in the server process environment or its Pipkin config. Use absolute paths for <code>root</code> and <code>job</code>, and project-relative paths for selected files and instructions.</p>
+<dl>
+<dt><code>pipkin_prompt(root, prompt)</code></dt><dd>Returns <code>reply</code> and <code>conversation</code>. Optional arguments are <code>conversation</code>, <code>provider_profile</code>, <code>system_prompt</code>, and the array <code>instruction_files</code>.</dd>
+<dt><code>pipkin_conversations(root, action)</code></dt><dd>Actions are <code>list</code>, <code>read</code>, and <code>delete</code>. Read and delete require the <code>conversation</code> ID.</dd>
+<dt><code>pipkin_instructions(root, action)</code></dt><dd>Actions are <code>list</code>, <code>read</code>, <code>save</code>, and <code>toggle</code>. Include <code>file</code> except for <code>list</code>. Include <code>markdown</code> for <code>save</code>.</dd>
+<dt><code>pipkin_pack(root, paths)</code></dt><dd>Creates a ZIP and returns its path and file count.</dd>
+<dt><code>pipkin_submit(root, paths, prompt)</code></dt><dd>Runs the delivery and returns <code>job</code> and <code>result</code>. Optional arguments are <code>agentic</code>, <code>system_prompt</code>, and the array <code>instruction_files</code>.</dd>
+<dt><code>pipkin_jobs(root)</code></dt><dd>Lists saved jobs.</dd>
+<dt><code>pipkin_review(job)</code></dt><dd>Returns the saved job and reviewable file changes.</dd>
+<dt><code>pipkin_apply(job, file)</code></dt><dd>Applies one reviewed file after explicit approval. The server must be started with <code>PIPKIN_MCP_ALLOW_APPLY=1</code>.</dd>
+</dl></section>
+{{end}}
