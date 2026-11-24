@@ -23,12 +23,25 @@ import (
 	"unicode/utf8"
 )
 
+type ProviderProfile struct {
+	Provider        string `json:"provider"`
+	BaseURL         string `json:"base_url,omitempty"`
+	Model           string `json:"model"`
+	APIKeyEnv       string `json:"api_key_env,omitempty"`
+	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
+}
+
 type Config struct {
+	ProviderProfile  string                     `json:"provider_profile,omitempty"`
+	ProviderProfiles map[string]ProviderProfile `json:"provider_profiles,omitempty"`
+	MaxOutputTokens  int                        `json:"max_output_tokens,omitempty"`
+	configError      error
+
 	AgentProfile    string                  `json:"agent_profile,omitempty"`
 	AgentProfiles   map[string]AgentProfile `json:"agent_profiles,omitempty"`
 	LangGraphPython string                  `json:"langgraph_python,omitempty"`
 
-	Provider             string `json:"provider"` // openai or multipart
+	Provider             string `json:"provider"` // selects the model transport
 	BaseURL              string `json:"base_url"` // OpenAI-compatible API base URL, e.g. https://api.openai.com/v1
 	Model                string `json:"model"`
 	APIKeyEnv            string `json:"api_key_env"`
@@ -167,46 +180,84 @@ func (c Config) hostedArchive(agentic bool) bool {
 }
 
 func (c Config) supportsAgentic() bool {
-	return c.Provider == "openai" || c.Provider == "openai-archive" || c.Provider == "vllm"
+	switch c.Provider {
+	case "openai", "openai-archive", "vllm", "xai", "anthropic", "digitalocean":
+		return true
+	default:
+		return false
+	}
 }
 
 func loadConfig() Config {
 	var c Config
-	if data, err := os.ReadFile(configPath()); err == nil {
-		_ = json.Unmarshal(data, &c)
+	path := configPath()
+	data, err := os.ReadFile(path)
+	if err == nil {
+		if err := json.Unmarshal(data, &c); err != nil {
+			c.configError = fmt.Errorf("invalid Pipkin config %s: %w", path, err)
+			return c
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		c.configError = fmt.Errorf("read Pipkin config: %w", err)
+		return c
 	}
-	if provider := strings.TrimSpace(os.Getenv("PIPKIN_PROVIDER")); provider != "" {
-		c.Provider = provider
+	if profile := strings.TrimSpace(os.Getenv("PIPKIN_PROVIDER_PROFILE")); profile != "" {
+		c.ProviderProfile = profile
+	}
+	if c.ProviderProfile != "" {
+		profile, ok := c.ProviderProfiles[c.ProviderProfile]
+		if !ok || profile.Provider == "" || profile.Model == "" {
+			c.configError = fmt.Errorf("provider profile %q must exist and specify provider and model", c.ProviderProfile)
+			return c
+		}
+		c.Provider, c.BaseURL, c.Model, c.APIKeyEnv = profile.Provider, profile.BaseURL, profile.Model, profile.APIKeyEnv
+		c.MaxOutputTokens = profile.MaxOutputTokens
+	} else {
+		if provider := strings.TrimSpace(os.Getenv("PIPKIN_PROVIDER")); provider != "" && provider != c.Provider {
+			if c.Provider != "" || provider != "openai" {
+				c.BaseURL, c.Model, c.APIKeyEnv = "", "", ""
+			}
+			c.Provider = provider
+		}
+		if base := strings.TrimSpace(os.Getenv("PIPKIN_BASE_URL")); base != "" {
+			c.BaseURL = base
+		}
+		if keyEnv := strings.TrimSpace(os.Getenv("PIPKIN_API_KEY_ENV")); keyEnv != "" {
+			c.APIKeyEnv = keyEnv
+		}
+		for _, name := range []string{"PIPKIN_MODEL", "OPENAI_MODEL"} {
+			if model := strings.TrimSpace(os.Getenv(name)); model != "" {
+				c.Model = model
+				break
+			}
+		}
 	}
 	if c.Provider == "" {
 		c.Provider = "openai"
 	}
-	if base := strings.TrimSpace(os.Getenv("PIPKIN_BASE_URL")); base != "" {
-		c.BaseURL = base
-	}
-	if keyEnv := strings.TrimSpace(os.Getenv("PIPKIN_API_KEY_ENV")); keyEnv != "" {
-		c.APIKeyEnv = keyEnv
-	}
-	if c.Provider == "vllm" {
-		if c.BaseURL == "" {
-			c.BaseURL = "http://127.0.0.1:8000/v1"
-		}
-	} else {
-		if c.BaseURL == "" {
-			c.BaseURL = "https://api.openai.com/v1"
-		}
+	var base, keyEnv string
+	switch c.Provider {
+	case "vllm":
+		base = "http://127.0.0.1:8000/v1"
+	case "anthropic":
+		base, keyEnv = "https://api.anthropic.com/v1", "ANTHROPIC_API_KEY"
+	case "xai":
+		base, keyEnv = "https://api.x.ai/v1", "XAI_API_KEY"
+	case "digitalocean":
+		base, keyEnv = "https://inference.do-ai.run/v1", "DIGITALOCEAN_INFERENCE_KEY"
+	case "openai", "openai-archive", "multipart":
+		base, keyEnv = "https://api.openai.com/v1", "OPENAI_API_KEY"
 		if c.Model == "" {
 			c.Model = "gpt-4.1-mini"
 		}
-		if c.APIKeyEnv == "" {
-			c.APIKeyEnv = "OPENAI_API_KEY"
-		}
+	default:
+		c.configError = fmt.Errorf("unknown provider %q", c.Provider)
 	}
-	for _, name := range []string{"PIPKIN_MODEL", "OPENAI_MODEL"} {
-		if model := strings.TrimSpace(os.Getenv(name)); model != "" {
-			c.Model = model
-			break
-		}
+	if c.BaseURL == "" {
+		c.BaseURL = base
+	}
+	if c.APIKeyEnv == "" {
+		c.APIKeyEnv = keyEnv
 	}
 	if c.MaxContextBytes <= 0 {
 		c.MaxContextBytes = 160000
@@ -473,22 +524,38 @@ func chatCompletion(ctx context.Context, cfg Config, system, user string, job *W
 	if key == "" && (cfg.Provider != "vllm" || cfg.APIKeyEnv != "") {
 		return "", fmt.Errorf("missing %s", cfg.APIKeyEnv)
 	}
-	payload := map[string]any{"model": cfg.Model, "messages": []map[string]string{{"role": "system", "content": system}, {"role": "user", "content": user}}}
+	operation := "chat-completions"
+	messages := []map[string]string{{"role": "user", "content": user}}
+	payload := map[string]any{"model": cfg.Model}
+	path := "/chat/completions"
+	if cfg.Provider == "anthropic" {
+		operation, path = "messages", "/messages"
+		payload["system"] = system
+		payload["max_tokens"] = cfg.MaxOutputTokens
+		if cfg.MaxOutputTokens <= 0 {
+			payload["max_tokens"] = 8192
+		}
+	} else {
+		messages = append([]map[string]string{{"role": "system", "content": system}}, messages...)
+	}
+	payload["messages"] = messages
 	data, _ := json.Marshal(payload)
-	url := strings.TrimSuffix(cfg.BaseURL, "/") + "/chat/completions"
-	req, e := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(data))
+	req, e := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(cfg.BaseURL, "/")+path, bytes.NewReader(data))
 	if e != nil {
 		return "", e
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if key != "" {
+	if cfg.Provider == "anthropic" {
+		req.Header.Set("x-api-key", key)
+		req.Header.Set("anthropic-version", "2023-06-01")
+	} else if key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
 	var traceInput, traceReply string
 	if captureTraceIO(cfg) {
 		traceInput = "System:\n" + system + "\n\nUser:\n" + user
 	}
-	defer recordLLMCall(ctx, cfg, "chat-completions", job, &err, traceInput, &traceReply)()
+	defer recordLLMCall(ctx, cfg, operation, job, &err, traceInput, &traceReply)()
 	resp, e := http.DefaultClient.Do(req)
 	if e != nil {
 		return "", e
@@ -500,6 +567,38 @@ func chatCompletion(ctx context.Context, cfg Config, system, user string, job *W
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("LLM HTTP %d: %s", resp.StatusCode, trunc(string(answer), 500))
+	}
+	if cfg.Provider == "anthropic" {
+		var result struct {
+			Content    []struct{ Type, Text string }
+			StopReason string `json:"stop_reason"`
+			Usage      struct {
+				Input      int `json:"input_tokens"`
+				Output     int `json:"output_tokens"`
+				CacheRead  int `json:"cache_read_input_tokens"`
+				CacheWrite int `json:"cache_creation_input_tokens"`
+			}
+		}
+		if err := json.Unmarshal(answer, &result); err != nil {
+			return "", err
+		}
+		var content strings.Builder
+		for _, block := range result.Content {
+			if block.Type == "text" {
+				content.WriteString(block.Text)
+			}
+		}
+		traceReply = content.String()
+		u := result.Usage
+		recordUsage(ctx, job, u.Input+u.CacheRead+u.CacheWrite, u.Output, u.CacheRead)
+		switch result.StopReason {
+		case "max_tokens", "refusal", "model_context_window_exceeded":
+			return "", fmt.Errorf("LLM response incomplete: %s", result.StopReason)
+		}
+		if strings.TrimSpace(traceReply) == "" {
+			return "", errors.New("LLM returned no text")
+		}
+		return strings.TrimSpace(traceReply), nil
 	}
 	var result struct {
 		Usage struct {
@@ -522,12 +621,7 @@ func chatCompletion(ctx context.Context, cfg Config, system, user string, job *W
 	if len(result.Choices) == 0 {
 		return "", errors.New("LLM returned no choices")
 	}
-	if job != nil {
-		job.InputTokens += result.Usage.Input
-		job.OutputTokens += result.Usage.Output
-		job.CachedTokens += result.Usage.Details.Cached
-		emit(ctx, workflowEvent{Type: "usage", InputTokens: job.InputTokens, OutputTokens: job.OutputTokens, CachedTokens: job.CachedTokens})
-	}
+	recordUsage(ctx, job, result.Usage.Input, result.Usage.Output, result.Usage.Details.Cached)
 	choice := result.Choices[0]
 	traceReply = choice.Message.Content
 	if choice.FinishReason == "length" || choice.FinishReason == "content_filter" {
@@ -538,6 +632,16 @@ func chatCompletion(ctx context.Context, cfg Config, system, user string, job *W
 		return "", errors.New("LLM returned no text")
 	}
 	return content, nil
+}
+
+func recordUsage(ctx context.Context, job *WorkflowJob, input, output, cached int) {
+	if job == nil {
+		return
+	}
+	job.InputTokens += input
+	job.OutputTokens += output
+	job.CachedTokens += cached
+	emit(ctx, workflowEvent{Type: "usage", InputTokens: job.InputTokens, OutputTokens: job.OutputTokens, CachedTokens: job.CachedTokens})
 }
 
 func runSnippet() error {
@@ -553,7 +657,7 @@ func runSnippet() error {
 	}
 	cfg := loadConfig()
 	if !cfg.supportsAgentic() {
-		return errors.New("snippet requests require an OpenAI-compatible chat endpoint")
+		return errors.New("snippet requests require a text-capable provider")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -881,7 +985,7 @@ func runCLI(root, manifest, output, promptFile string, doLLM bool) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		switch cfg.Provider {
-		case "openai", "vllm":
+		case "openai", "vllm", "xai", "anthropic", "digitalocean":
 			err = sendOpenAI(ctx, cfg, root, input, output, string(prompt), nil, &WorkflowJob{})
 		case "multipart":
 			err = sendMultipart(ctx, cfg, input, output, string(prompt))
@@ -910,6 +1014,8 @@ func main() {
 	webMode := flag.Bool("web", false, "serve local web review UI (requires LISTEN_URL)")
 	zipMode := flag.Bool("zip", false, "create ZIP without a TUI")
 	profile := flag.String("agent-profile", "", "select an agent profile for this process")
+	providerProfile := flag.String("provider-profile", "", "select a provider profile")
+	providerProfiles := flag.Bool("provider-profiles", false, "list configured provider profiles")
 	profiles := flag.Bool("agent-profiles", false, "list configured agent profiles")
 	agentic := flag.Bool("agentic", false, "use agentic review with --workflow or as the TUI default")
 	workflowMode := flag.Bool("workflow", false, "submit ZIP to provider, save session and stream JSON events")
@@ -922,6 +1028,32 @@ func main() {
 	output := flag.String("output", "", "destination ZIP path")
 	promptFile := flag.String("prompt-file", "", "prompt text file (required for --llm)")
 	flag.Parse()
+	if *providerProfile != "" {
+		if err := os.Setenv("PIPKIN_PROVIDER_PROFILE", *providerProfile); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+	cfg := loadConfig()
+	if cfg.configError != nil {
+		fmt.Fprintln(os.Stderr, cfg.configError)
+		os.Exit(1)
+	}
+	if *providerProfiles {
+		names := make([]string, 0, len(cfg.ProviderProfiles))
+		for name := range cfg.ProviderProfiles {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			if name == cfg.ProviderProfile {
+				fmt.Println(name + " (active)")
+			} else {
+				fmt.Println(name)
+			}
+		}
+		return
+	}
 	if *snippet {
 		if err := runSnippet(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -1148,7 +1280,7 @@ func main() {
 		case "L", "p", "P":
 			a.agentic = *agentic || key == "P"
 			if a.agentic && !a.cfg.supportsAgentic() {
-				a.status = "Agentic mode requires OpenAI or vLLM"
+				a.status = "Agentic mode requires a text or hosted archive provider"
 				continue
 			}
 			a.prompt = ""

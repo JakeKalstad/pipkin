@@ -174,6 +174,29 @@ Hosted agentic runs reuse the original upload within a delivery and upload only 
 
 Uncomment one provider block in `.env.example`. Set `PIPKIN_PROVIDER`, `PIPKIN_BASE_URL`, and `PIPKIN_MODEL` together when switching endpoints. These settings override the corresponding values in `config.json`. `PIPKIN_API_KEY_ENV` names the environment variable that contains your key. Restart Pipkin after changing the environment.
 
+## Switch between model providers
+
+Merge these fields into `~/.config/pipkin/config.json`. Replace the model placeholders with the exact IDs available to your accounts.
+
+```json
+{
+  "provider_profile": "grok",
+  "provider_profiles": {
+    "grok": {"provider": "xai", "model": "your-grok-model-id"},
+    "claude": {"provider": "anthropic", "model": "your-claude-model-id"},
+    "do": {"provider": "digitalocean", "model": "your-digitalocean-model-id"},
+    "openai": {"provider": "openai", "model": "gpt-5.2"},
+    "local": {"provider": "vllm", "base_url": "http://127.0.0.1:9999/v1", "model": "your-local-model-id"}
+  }
+}
+```
+
+Add `XAI_API_KEY`, `ANTHROPIC_API_KEY`, and `DIGITALOCEAN_INFERENCE_KEY` to your Pipkin `.env`. DigitalOcean expects a model inference key. Each profile can override `base_url` and `api_key_env`. Claude profiles can also set `max_output_tokens` (default 8192).
+
+Run `pipkin --provider-profiles` to list profiles, or `pipkin --provider-profile claude` to select one for a process. Set `PIPKIN_PROVIDER_PROFILE=do` in your Pipkin `.env` to switch all surfaces, including editor commands. A named profile supplies the endpoint, model, and key variable together. Legacy provider overrides apply when no named profile is selected. Provider profiles select the model connection. Agent profiles still select the review runner and review depth.
+
+Grok, Claude, DigitalOcean, and vLLM support text submissions, snippet replies, and multi-pass agentic edits. Text context limits apply. OpenAI’s hosted archive workflow is available through the existing OpenAI configuration.
+
 ## Local vLLM
 
 Point Pipkin at your running vLLM server and set `model` to the name it serves.
@@ -208,7 +231,7 @@ pipkin --git-diff ~/pipkin/outputs/jobs/PROJECT/job-ID
 
 On wide terminals, the file picker shares the screen with Parcel, recent ZIPs, and saved requests. All LLM submissions—including the legacy text provider—are now recorded as **reviewable sessions**.
 
-**File picker:** `space` select, `z` package, `p` prompt and send, uppercase `P` start an agentic prompt with OpenAI or vLLM, `r` review completed deliveries, `i` import an existing `<project>.zip` + `<project>-llm.zip` pair from the output directory, `q` quit.
+**File picker:** `space` select, `z` package, `p` prompt and send, uppercase `P` start an agentic prompt with the selected provider, `r` review completed deliveries, `i` import an existing `<project>.zip` + `<project>-llm.zip` pair from the output directory, `q` quit.
 
 ### Prompt the selected files
 

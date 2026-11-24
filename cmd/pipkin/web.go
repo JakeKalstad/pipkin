@@ -318,7 +318,7 @@ func webHandlerForRoot(root string) http.Handler {
 		}
 		agentic := r.PostForm.Get("agentic") == "1"
 		if agentic && !loadConfig().supportsAgentic() {
-			http.Error(w, "agentic mode requires OpenAI or vLLM", 400)
+			http.Error(w, "agentic mode requires a text or hosted archive provider", 400)
 			return
 		}
 		// Persistent jobs continue independently of browser connections.

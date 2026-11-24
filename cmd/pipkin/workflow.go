@@ -562,8 +562,11 @@ func workflowSendFiles(ctx context.Context, root string, files []*Node, prompt s
 		return errors.New("prompt is required")
 	}
 	cfg := loadConfig()
+	if cfg.configError != nil {
+		return cfg.configError
+	}
 	if agentic && !cfg.supportsAgentic() {
-		return errors.New("agentic mode requires OpenAI or vLLM")
+		return errors.New("agentic mode requires a text or hosted archive provider")
 	}
 	base := filepath.Join(outputDirectory(), "jobs", filepath.Base(root))
 	if e := os.MkdirAll(base, 0700); e != nil {
@@ -602,7 +605,7 @@ func workflowSendFiles(ctx context.Context, root string, files []*Node, prompt s
 		e = openAIArchive(ctx, cfg, input, result, prompt, &job)
 	case cfg.Provider == "multipart":
 		e = sendMultipart(ctx, cfg, input, result, prompt)
-	case cfg.Provider == "openai" || cfg.Provider == "vllm":
+	case cfg.supportsAgentic():
 		e = sendOpenAI(ctx, cfg, root, input, result, prompt, &job.ContextOmitted, &job)
 	default:
 		e = fmt.Errorf("unsupported provider %q", cfg.Provider)
