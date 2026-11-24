@@ -74,6 +74,7 @@ func mcpProject(root string) (string, error) {
 	}
 	return root, nil
 }
+
 func mcpJob(job string) (string, error) {
 	if !filepath.IsAbs(job) {
 		return "", errors.New("job must be an absolute path")

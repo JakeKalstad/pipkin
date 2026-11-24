@@ -314,9 +314,16 @@ class PipkinEndToEnd(unittest.TestCase):
         self.assert_workspace(PROPOSED["alpha.txt"])
 
     def test_snippet_uses_project_environment_and_archive_provider(self):
+        traces = []
+
         class SnippetProvider(BaseHTTPRequestHandler):
             def do_POST(self):
                 request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if self.path == "/api/public/otel/v1/traces":
+                    traces.append(request)
+                    self.send_response(200)
+                    self.end_headers()
+                    return
                 if (self.path != "/v1/chat/completions"
                         or self.headers.get("Authorization") != "Bearer snippet-key"
                         or request["model"] != "snippet-model"
@@ -325,7 +332,7 @@ class PipkinEndToEnd(unittest.TestCase):
                     return
                 self.send_response(200)
                 self.end_headers()
-                self.wfile.write(b'{"choices":[{"message":{"content":"Snippet response"}}]}')
+                self.wfile.write(b'{"choices":[{"message":{"content":"Snippet response"}}],"usage":{"prompt_tokens":20,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":8}}}')
 
             def log_message(self, format, *args):
                 pass
@@ -335,6 +342,10 @@ class PipkinEndToEnd(unittest.TestCase):
             thread.start()
             try:
                 self.env.pop("PIPKIN_ENV_FILE")
+                self.env["PIPKIN_LANGFUSE_CAPTURE_IO"] = "0"
+                self.env["LANGFUSE_BASE_URL"] = f"http://127.0.0.1:{server.server_port}"
+                self.env["LANGFUSE_PUBLIC_KEY"] = "pk-test"
+                self.env["LANGFUSE_SECRET_KEY"] = "sk-test"
                 (self.project / ".env").write_text(
                     f"PIPKIN_PROVIDER=openai-archive\n"
                     f"PIPKIN_BASE_URL=http://127.0.0.1:{server.server_port}/v1\n"
@@ -345,6 +356,23 @@ class PipkinEndToEnd(unittest.TestCase):
                 out, err = process.communicate(b'{"system":"Explain code","user":"Explain this snippet"}', timeout=TIMEOUT)
                 self.assertEqual(process.returncode, 0, err)
                 self.assertEqual(out.strip(), b"Snippet response")
+                self.assertEqual(len(traces), 1)
+                span = traces[0]["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+                self.assertEqual(span["name"], "pipkin-snippet")
+                attrs = {item["key"]: item["value"] for item in span["attributes"]}
+                self.assertEqual(attrs["pipkin.cached_tokens"]["intValue"], "8")
+                self.assertNotIn("Explain this snippet", json.dumps(traces))
+                self.assertNotIn("Snippet response", json.dumps(traces))
+                self.env["PIPKIN_LANGFUSE_CAPTURE_IO"] = "1"
+                process = self.start("--snippet", stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                out, err = process.communicate(b'{"system":"Explain code","user":"Explain this snippet"}', timeout=TIMEOUT)
+                self.assertEqual(process.returncode, 0, err)
+                self.assertEqual(out.strip(), b"Snippet response")
+                self.assertEqual(len(traces), 2)
+                span = traces[1]["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+                attrs = {item["key"]: item["value"] for item in span["attributes"]}
+                self.assertIn("Explain this snippet", attrs["langfuse.observation.input"]["stringValue"])
+                self.assertEqual(attrs["langfuse.observation.output"]["stringValue"], "Snippet response")
             finally:
                 server.shutdown()
                 thread.join(TIMEOUT)

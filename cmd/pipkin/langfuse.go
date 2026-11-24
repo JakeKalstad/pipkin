@@ -23,10 +23,72 @@ func langfuseURL(cfg Config) string {
 	return strings.TrimSpace(os.Getenv("LANGFUSE_BASE_URL"))
 }
 
-// reportLangfuse sends a metadata-only OTLP/HTTP trace to Langfuse v4.
-// No prompts, project contents, archive bytes, or API secrets are exported.
+type llmTraceKey struct{}
+type llmStageKey struct{}
+type llmCall struct {
+	name                  string
+	start, end            time.Time
+	input, output, cached int
+	failed                bool
+	request, reply        string
+}
+type llmTrace struct {
+	calls []llmCall
+}
+
+const traceTextLimit = 64 << 10
+
+func captureTraceIO(cfg Config) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("PIPKIN_LANGFUSE_CAPTURE_IO"))) {
+	case "1", "true":
+		return langfuseURL(cfg) != ""
+	default:
+		return false
+	}
+}
+
+func boundedTraceText(text string) string {
+	if len(text) <= traceTextLimit {
+		return text
+	}
+	return strings.ToValidUTF8(text[:traceTextLimit], "") + "\n[truncated]"
+}
+
+func recordLLMCall(ctx context.Context, cfg Config, operation string, job *WorkflowJob, err *error, input string, output *string) func() {
+	call := llmCall{name: operation, start: time.Now()}
+	capture := captureTraceIO(cfg)
+	if capture {
+		call.request = boundedTraceText(input)
+	}
+	if stage, ok := ctx.Value(llmStageKey{}).(string); ok {
+		call.name = stage + "/" + operation
+	}
+	if job != nil {
+		call.input, call.output, call.cached = -job.InputTokens, -job.OutputTokens, -job.CachedTokens
+	}
+	return func() {
+		call.end, call.failed = time.Now(), *err != nil
+		if capture && output != nil {
+			call.reply = boundedTraceText(*output)
+		}
+		if job != nil {
+			call.input += job.InputTokens
+			call.output += job.OutputTokens
+			call.cached += job.CachedTokens
+		}
+		if trace, ok := ctx.Value(llmTraceKey{}).(*llmTrace); ok {
+			trace.calls = append(trace.calls, call)
+			return
+		}
+		if exportErr := reportLangfuse(cfg, WorkflowJob{Provider: cfg.Provider, Model: cfg.Model}, call); exportErr != nil {
+			fmt.Fprintln(os.Stderr, "Langfuse export failed:", exportErr)
+		}
+	}
+}
+
+// reportLangfuse sends OTLP/HTTP spans to Langfuse v4. Text capture is opt-in.
 // Tracing is optional, and a failed export must not fail a project run.
-func reportLangfuse(cfg Config, job WorkflowJob) error {
+func reportLangfuse(cfg Config, job WorkflowJob, calls ...llmCall) error {
 	base := langfuseURL(cfg)
 	publicEnv := cfg.LangfusePublicKeyEnv
 	if publicEnv == "" {
@@ -74,14 +136,55 @@ func reportLangfuse(cfg Config, job WorkflowJob) error {
 	usageAttr := func(key string, value int) map[string]any {
 		return map[string]any{"key": key, "value": map[string]any{"intValue": fmt.Sprint(value)}}
 	}
-	attrs := []any{attr("langfuse.observation.type", "generation"), attr("langfuse.trace.name", "pipkin-workflow"), attr("gen_ai.operation.name", "chat"), attr("gen_ai.request.model", job.Model), attr("pipkin.job_id", job.ID), attr("pipkin.provider", job.Provider), attr("pipkin.status", job.Status), usageAttr("gen_ai.usage.input_tokens", job.InputTokens), usageAttr("gen_ai.usage.output_tokens", job.OutputTokens), usageAttr("pipkin.cached_tokens", job.CachedTokens)}
-	span := map[string]any{"traceId": hex.EncodeToString(traceIDBytes), "spanId": hex.EncodeToString(spanIDBytes), "name": "pipkin-workflow", "startTimeUnixNano": fmt.Sprint(start.UnixNano()), "endTimeUnixNano": fmt.Sprint(end.UnixNano()), "attributes": attrs}
-	if job.Error != "" {
-		span["status"] = map[string]any{"code": 2}
-	} else {
-		span["status"] = map[string]any{"code": 1}
+	name := "pipkin-workflow"
+	if job.Operation == "snippet" {
+		name = "pipkin-snippet"
 	}
-	payload := map[string]any{"resourceSpans": []any{map[string]any{"resource": map[string]any{"attributes": []any{attr("service.name", "pipkin")}}, "scopeSpans": []any{map[string]any{"scope": map[string]any{"name": "pipkin"}, "spans": []any{span}}}}}}
+	makeSpan := func(spanName, kind string, start, end time.Time, failed bool, input, output, cached int) map[string]any {
+		attrs := []any{attr("langfuse.observation.type", kind), attr("langfuse.trace.name", name), attr("pipkin.job_id", job.ID), attr("pipkin.provider", job.Provider)}
+		if kind == "generation" {
+			attrs = append(attrs, attr("gen_ai.operation.name", "chat"), attr("gen_ai.request.model", job.Model),
+				usageAttr("gen_ai.usage.input_tokens", input), usageAttr("gen_ai.usage.output_tokens", output), usageAttr("pipkin.cached_tokens", cached))
+		}
+		code, status := 1, "completed"
+		if failed {
+			code, status = 2, "failed"
+		}
+		attrs = append(attrs, attr("pipkin.status", status))
+		return map[string]any{"traceId": hex.EncodeToString(traceIDBytes), "spanId": hex.EncodeToString(spanIDBytes), "name": spanName, "startTimeUnixNano": fmt.Sprint(start.UnixNano()), "endTimeUnixNano": fmt.Sprint(end.UnixNano()), "attributes": attrs, "status": map[string]any{"code": code}}
+	}
+	generation := func(spanName string, call llmCall) map[string]any {
+		span := makeSpan(spanName, "generation", call.start, call.end, call.failed, call.input, call.output, call.cached)
+		attrs := span["attributes"].([]any)
+		if call.request != "" {
+			attrs = append(attrs, attr("langfuse.observation.input", call.request))
+		}
+		if call.reply != "" {
+			attrs = append(attrs, attr("langfuse.observation.output", call.reply))
+		}
+		span["attributes"] = attrs
+		return span
+	}
+	var spans []any
+	switch {
+	case len(calls) == 0:
+		spans = append(spans, makeSpan(name, "span", start, end, job.Error != "", 0, 0, 0))
+	case len(calls) == 1 && (job.Operation == "snippet" || job.ID == ""):
+		call := calls[0]
+		spans = append(spans, generation(name, call))
+	default:
+		root := makeSpan(name, "span", start, end, job.Error != "", 0, 0, 0)
+		spans = append(spans, root)
+		for _, call := range calls {
+			if _, err := rand.Read(spanIDBytes); err != nil {
+				return err
+			}
+			span := generation(call.name, call)
+			span["parentSpanId"] = root["spanId"]
+			spans = append(spans, span)
+		}
+	}
+	payload := map[string]any{"resourceSpans": []any{map[string]any{"resource": map[string]any{"attributes": []any{attr("service.name", "pipkin")}}, "scopeSpans": []any{map[string]any{"scope": map[string]any{"name": "pipkin"}, "spans": spans}}}}}
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return err

@@ -50,7 +50,7 @@ func TestLegacyLLMAddsFileToArchive(t *testing.T) {
 			defer srv.Close()
 			output := filepath.Join(t.TempDir(), "out.zip")
 			cfg := Config{BaseURL: srv.URL, Model: "test", APIKeyEnv: "PIPKIN_TEST_KEY", MaxContextBytes: 100000}
-			err := sendOpenAI(context.Background(), cfg, root, input, output, "test", nil)
+			err := sendOpenAI(context.Background(), cfg, root, input, output, "test", nil, nil)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("got err %v wantErr %v", err, tc.wantErr)
 			}
@@ -97,7 +97,7 @@ func TestLegacyLLMReportsOmittedContext(t *testing.T) {
 	t.Setenv("PIPKIN_TEST_KEY", "dummy")
 	cfg := Config{BaseURL: server.URL, Model: "test", APIKeyEnv: "PIPKIN_TEST_KEY", MaxContextBytes: 160000}
 	var omitted []string
-	if err := sendOpenAI(context.Background(), cfg, root, input, filepath.Join(root, "result.zip"), "Edit docs", &omitted); err != nil {
+	if err := sendOpenAI(context.Background(), cfg, root, input, filepath.Join(root, "result.zip"), "Edit docs", &omitted, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(omitted) != 1 || omitted[0] != "README.md" {

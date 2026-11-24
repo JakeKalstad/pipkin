@@ -10,7 +10,7 @@ const tree=document.getElementById('tree');function update(){const checked=[...t
 tree.addEventListener('change',e=>{const c=e.target;if(c.matches('input[data-dir]')){const parent=c.closest('details');if(parent)parent.querySelectorAll('input[type="checkbox"]').forEach(x=>x.checked=c.checked)}update()});
 document.getElementById('all').onclick=()=>{tree.querySelectorAll('input[type="checkbox"]:not([data-ignored])').forEach(x=>x.checked=true);update()};document.getElementById('none').onclick=()=>{tree.querySelectorAll('input[type="checkbox"]').forEach(x=>x.checked=false);update()};update();
 </script>
-{{else}}<p><a href="/">← All deliveries</a></p><h1>Review {{.JobInfo.ID}} <span class="status">{{.JobInfo.Status}}</span></h1><p class="meta">{{.JobInfo.Provider}} · {{.JobInfo.Model}} · {{.Root}} · {{.JobInfo.InputTokens}} input tokens · {{.JobInfo.OutputTokens}} output tokens</p>
+{{else}}<p><a href="/">← All deliveries</a></p><h1>Review {{.JobInfo.ID}} <span class="status">{{.JobInfo.Status}}</span></h1><p class="meta">{{.JobInfo.Provider}} · {{.JobInfo.Model}} · {{.Root}} · {{.JobInfo.InputTokens}} input tokens{{if .JobInfo.CachedTokens}} ({{.JobInfo.CachedTokens}} cached){{end}} · {{.JobInfo.OutputTokens}} output tokens</p>
 {{if eq .JobInfo.Status "running"}}<p class="notice">Pipkin is working. This page updates every few seconds.</p><script>setTimeout(()=>location.reload(),3000)</script>{{end}}
 {{if .JobInfo.LangfuseStatus}}<p class="meta">{{.JobInfo.LangfuseStatus}}</p>{{end}}
 {{if .JobInfo.ContextOmitted}}<details class="meta"><summary>{{len .JobInfo.ContextOmitted}} selected files omitted from model context</summary><ul>{{range .JobInfo.ContextOmitted}}<li>{{.}}</li>{{end}}</ul></details>{{end}}

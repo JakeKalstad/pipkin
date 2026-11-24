@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -34,6 +35,7 @@ func TestAgenticWorkflowReviewsDraft(t *testing.T) {
 		drafts[name] = data
 	}
 	passes := make(chan string, 2)
+	var projectUploads atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "POST" && r.URL.Path == "/files":
@@ -44,6 +46,9 @@ func TestAgenticWorkflowReviewsDraft(t *testing.T) {
 				return
 			}
 			defer f.Close()
+			if header.Filename == "project.zip" {
+				projectUploads.Add(1)
+			}
 			fmt.Fprintf(w, `{"id":%q}`, header.Filename)
 		case r.URL.Path == "/responses":
 			var body struct {
@@ -99,6 +104,9 @@ func TestAgenticWorkflowReviewsDraft(t *testing.T) {
 	if err := workflowSendFiles(ctx, root, []*Node{{name: "main.go", rel: "main.go"}}, "Fix main", true); err != nil {
 		t.Fatal(err)
 	}
+	if count := projectUploads.Load(); count != 1 {
+		t.Fatalf("uploaded the original project %d times", count)
+	}
 	close(passes)
 	var got []string
 	for pass := range passes {
@@ -140,6 +148,7 @@ func TestVLLMAgenticDelivery(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "must-not-be-sent")
 	config := filepath.Join(output, "config.json")
 	t.Setenv("PIPKIN_CONFIG", config)
+	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" || r.Header.Get("Authorization") != "" {
 			t.Error("unexpected local endpoint or authentication")
@@ -153,7 +162,11 @@ func TestVLLMAgenticDelivery(t *testing.T) {
 			http.Error(w, "invalid request", 400)
 			return
 		}
+		calls.Add(1)
 		request := body.Messages[1].Content
+		if strings.Index(request, "PROJECT FILES") != 0 || strings.Index(request, "USER REQUEST:") < strings.Index(request, "--- FILE: README.md ---") {
+			t.Errorf("file context must precede request: %s", request)
+		}
 		var replacement string
 		switch {
 		case strings.Contains(request, "reviewed README") && strings.Contains(request, "Additional review focus: compatibility"):
@@ -168,7 +181,7 @@ func TestVLLMAgenticDelivery(t *testing.T) {
 			return
 		}
 		payload, _ := json.Marshal(Changes{Changes: []Change{{Path: "README.md", Content: replacement}}})
-		fmt.Fprintf(w, `{"choices":[{"message":{"content":%q}}]}`, payload)
+		fmt.Fprintf(w, `{"usage":{"prompt_tokens":20,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":8}},"choices":[{"message":{"content":%q}}]}`, payload)
 	}))
 	defer server.Close()
 	if err := os.WriteFile(config, []byte(fmt.Sprintf(`{"provider":"vllm","base_url":%q,"model":"local-model"}`, server.URL+"/v1")), 0600); err != nil {
@@ -177,11 +190,21 @@ func TestVLLMAgenticDelivery(t *testing.T) {
 	cfg := loadConfig()
 	if os.Getenv("PIPKIN_TEST_LANGGRAPH") == "1" {
 		cfg.AgentProfile = "integration"
-		cfg.AgentProfiles = map[string]AgentProfile{"integration": {Runner: "langgraph", ReviewPasses: 2, ReviewFocus: "compatibility"}}
+		cfg.AgentProfiles = map[string]AgentProfile{"integration": {Runner: "langgraph", ReviewPasses: 3, ReviewFocus: "compatibility"}}
 	}
 	job := WorkflowJob{}
 	if err := agenticDelivery(context.Background(), cfg, root, input, result, "Update README", &job); err != nil {
 		t.Fatal(err)
+	}
+	wantCalls := int32(2)
+	if os.Getenv("PIPKIN_TEST_LANGGRAPH") == "1" {
+		wantCalls = 3 // draft, changed review, unchanged review. The last review is skipped.
+	}
+	if got := calls.Load(); got != wantCalls {
+		t.Fatalf("model requests: got %d, want %d", got, wantCalls)
+	}
+	if job.InputTokens != int(wantCalls)*20 || job.OutputTokens != int(wantCalls)*5 || job.CachedTokens != int(wantCalls)*8 {
+		t.Fatalf("unexpected usage: %+v", job)
 	}
 	files, err := readArchive(result)
 	if err != nil || string(files["README.md"]) != "reviewed README" {
@@ -254,9 +277,17 @@ func TestHostedDraftFallsBackToText(t *testing.T) {
 	defer server.Close()
 	cfg := Config{Provider: "openai-archive", BaseURL: server.URL, Model: "test", APIKeyEnv: "PIPKIN_TEST_KEY", MaxContextBytes: 160000}
 	var job WorkflowJob
-	if err := agenticDelivery(context.Background(), cfg, root, input, result, "Edit README", &job); err != nil {
+	trace := &llmTrace{}
+	ctx := context.WithValue(context.Background(), llmTraceKey{}, trace)
+	if err := agenticDelivery(ctx, cfg, root, input, result, "Edit README", &job); err != nil {
 		t.Fatal(err)
 	}
+	if len(trace.calls) != 3 || trace.calls[0].name != "draft/responses" || !trace.calls[0].failed ||
+		trace.calls[1].name != "draft/chat-completions" || trace.calls[1].failed ||
+		trace.calls[2].name != "review-1/chat-completions" || trace.calls[2].failed {
+		t.Fatalf("unexpected trace calls: %+v", trace.calls)
+	}
+
 	files, err := readArchive(result)
 	if err != nil || !job.TextFallback || string(files["README.md"]) != "text fallback" {
 		t.Fatalf("fallback did not finish: %v, %v, %v", job.TextFallback, files, err)
