@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Parcel, the Pipkin otter</title>
+  <desc id="desc">A cheerful brown otter carrying a golden zippered parcel on a deep teal badge.</desc>
+  <rect x="12" y="12" width="488" height="488" rx="106" fill="#123b37"/>
+  <circle cx="256" cy="251" r="182" fill="#1b5149"/>
+  <path d="M92 354h31m-43 21h58m245-238h36m-24 21h36" fill="none" stroke="#65b5a1" stroke-width="7" stroke-linecap="round" opacity=".64"/>
+  <path d="M103 188v32m-16-16h32m298 60v26m-13-13h26" fill="none" stroke="#f9cc77" stroke-width="7" stroke-linecap="round"/>
+  <g stroke="#222826" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M307 408c47 18 95 11 107-26-21 15-47 13-74-10z" fill="#a86342"/>
+    <path d="M169 401c-17-27-13-64-1-97 15-41 44-59 88-59s74 23 91 57c14 29 16 66 2 96-25 24-141 27-180 3Z" fill="#ad6b46"/>
+    <path d="M199 405c-11-25-1-68 57-70 52-2 68 33 57 70" fill="#e8ab74" stroke="none"/>
+    <circle cx="161" cy="161" r="30" fill="#ad6b46"/>
+    <circle cx="351" cy="161" r="30" fill="#ad6b46"/>
+    <circle cx="163" cy="161" r="15" fill="#e7a681" stroke="none"/>
+    <circle cx="349" cy="161" r="15" fill="#e7a681" stroke="none"/>
+    <path d="M135 222c0-65 49-109 121-109s121 44 121 109c0 61-46 102-121 102s-121-41-121-102Z" fill="#c17e52"/>
+    <path d="M174 260c0-28 29-49 57-43 9 2 17 7 25 13 8-6 16-11 25-13 28-6 57 15 57 43 0 31-35 49-82 49s-82-18-82-49Z" fill="#ffe4b4" stroke="none"/>
+    <path d="M197 207c1-13 11-20 21-17m76 1c12-4 22 2 23 15" fill="none" stroke-width="6"/>
+    <ellipse cx="215" cy="219" rx="7" ry="11" fill="#222826" stroke="none"/>
+    <ellipse cx="299" cy="219" rx="7" ry="11" fill="#222826" stroke="none"/>
+    <path d="M237 244q19-10 38 0-3 15-19 19-16-4-19-19Z" fill="#222826" stroke="none"/>
+    <path d="M256 259v13m-17 1q9 13 17-1 8 14 17 1" fill="none" stroke-width="5"/>
+    <path d="m162 248 25 4m-26 13 23-1m167-16-25 4m26 13-23-1" fill="none" stroke-width="4"/>
+    <g transform="rotate(-8 256 366)">
+      <rect x="191" y="319" width="132" height="95" rx="16" fill="#f6be60" stroke-width="8"/>
+      <path d="M193 342h128" stroke="#b16a32" stroke-width="5"/>
+      <path d="M256 322v65" stroke-width="5"/>
+      <path d="M246 348h20m-20 11h20m-20 11h20m-20 11h20" stroke-width="4"/>
+      <rect x="250" y="379" width="12" height="18" rx="4" fill="#ffe9b0" stroke-width="4"/>
+    </g>
+    <path d="M163 352c9-13 20-15 29-8l13 10c10 10 7 20-1 26-8 6-23 0-34-8-7-5-11-13-7-20Zm186 1c-7-12-21-16-29-8l-13 10c-8 8-6 18 2 24 9 7 23 2 34-6 7-5 10-14 6-20Z" fill="#c17e52" stroke-width="7"/>
+  </g>
+</svg>

@@ -1,8 +1,12 @@
-# 🦦 Pipkin
+# Pipkin
 
 **Understand, update, and maintain large codebases with local models and reviewable diffs.**
 
 Pipkin is an open-source tool for working on a large repository one focused task at a time. Select a file, directory, or snippet, then ask a model running locally through vLLM to explain it or propose a change. A hosted model is an option when you need one.
+
+<p align="center">
+  <img src="images/logo.svg" alt="Parcel, the Pipkin otter" width="96">
+</p>
 
 - **Choose the context.** Send the files relevant to the task so you can work on a large codebase without sending the whole repository on every request. For a question about a few lines, send a snippet.
 - **Review before applying.** Pipkin saves the original selection, prompt, and result. Compare the returned files with the submitted ZIP or your current workspace, approve changes file by file, and apply them when you’re ready.
@@ -11,6 +15,7 @@ Pipkin is an open-source tool for working on a large repository one focused task
 I built Pipkin after a few tools I’d written turned into a Rube Goldberg machine. I wanted the same workflow in a terminal, browser, and VSCodium. **Parcel** is the otter who carries the ZIP.
 
 Yes, this does involve reading a diff. We appreciate your patience with this legacy workflow. In recognition of this inconvenience, we’ve provided a TUI and an animal mascot.
+
 
 ![Pipkin landing screen](images/landing.png)
 
