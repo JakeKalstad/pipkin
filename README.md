@@ -27,6 +27,7 @@ make   # builds and installs Pipkin and the VSCodium extension
 Download a Linux or macOS binary from [GitHub Releases](https://github.com/JakeKalstad/pipkin/releases), or install the latest release into `~/.local/bin`:
 
 ```sh
+
 curl -fsSL https://github.com/JakeKalstad/pipkin/releases/latest/download/install.sh | sh
 ```
 
@@ -37,6 +38,7 @@ For a browser-based setup, run `docker compose up -d pipkin` from the repository
 With Pipkin installed and your vLLM server running, create `~/.config/pipkin/config.json` or merge these fields into your existing config:
 
 ```json
+
 {
   "provider": "vllm",
   "base_url": "http://127.0.0.1:8000/v1",
@@ -59,12 +61,133 @@ Provider settings live in `~/.config/pipkin/config.json`. Set `PIPKIN_CONFIG` to
 For API keys and optional settings such as the web UI and Langfuse, use a Pipkin environment file.
 
 ```sh
+
 mkdir -p ~/.config/pipkin
 cp -n .env.example ~/.config/pipkin/.env
 chmod 600 ~/.config/pipkin/.env
 ```
 
 Pipkin loads the home `.env` and then the current directory’s `.env`. Exported variables take precedence, followed by the home file. To load a specific file, export `PIPKIN_ENV_FILE=/path/to/.env` before launching Pipkin. The parser accepts `KEY=value`, optional `export`, quotes, and comments. Keep keys outside version control.
+
+## Switch between model providers
+
+Configure the providers you use once, then switch by profile name. The examples below cover OpenAI text and hosted archives, Anthropic Claude, xAI Grok, DigitalOcean Serverless Inference, and local vLLM.
+
+### 1. Create or update your provider profiles
+
+Create the directory if needed:
+
+```sh
+mkdir -p "$HOME/.config/pipkin"
+```
+
+If you already have a `config.json`, merge these two fields into it and keep your existing LangGraph and Langfuse settings. Otherwise, use this complete JSON as `~/.config/pipkin/config.json`. The default profile below is local. Replace any example model ID with the exact ID available to your account or local server.
+
+```json
+{
+  "provider_profile": "local",
+  "provider_profiles": {
+    "local": {
+      "provider": "vllm",
+      "base_url": "http://127.0.0.1:8000/v1",
+      "model": "Qwen/Qwen3-0.6B"
+    },
+    "openai": {
+      "provider": "openai",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5.2",
+      "api_key_env": "OPENAI_API_KEY"
+    },
+    "openai-archive": {
+      "provider": "openai-archive",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5.2",
+      "api_key_env": "OPENAI_API_KEY"
+    },
+    "claude": {
+      "provider": "anthropic",
+      "base_url": "https://api.anthropic.com/v1",
+      "model": "claude-sonnet-4-6",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "max_output_tokens": 8192
+    },
+    "grok": {
+      "provider": "xai",
+      "base_url": "https://api.x.ai/v1",
+      "model": "grok-4.3",
+      "api_key_env": "XAI_API_KEY"
+    },
+    "do": {
+      "provider": "digitalocean",
+      "base_url": "https://inference.do-ai.run/v1",
+      "model": "openai-gpt-oss-120b",
+      "api_key_env": "DIGITALOCEAN_INFERENCE_KEY"
+    }
+  }
+}
+```
+
+If you set `PIPKIN_CONFIG`, edit the file it points to. Use a base URL ending in `/v1`. Pipkin appends the API route.
+
+### 2. Configure credentials and the local server
+
+Add only the keys for providers you plan to use to `~/.config/pipkin/.env`. Replace the placeholder values. In JSON, `api_key_env` is the **name** of the variable containing the key.
+
+```dotenv
+# OPENAI_API_KEY=replace-with-your-openai-api-key
+# ANTHROPIC_API_KEY=replace-with-your-anthropic-api-key
+# XAI_API_KEY=replace-with-your-xai-api-key
+# DIGITALOCEAN_INFERENCE_KEY=replace-with-your-digitalocean-inference-key
+# VLLM_API_KEY=replace-with-your-local-server-key
+```
+
+Uncomment the applicable lines and run `chmod 600 "$HOME/.config/pipkin/.env"`.
+
+| Profile | Where to get the key and what to set |
+| --- | --- |
+| `openai` | Create a project API key on the OpenAI API platform and set `OPENAI_API_KEY`. Standard edits use text requests. Agentic edits at the official OpenAI endpoint use the hosted archive workflow. |
+| `openai-archive` | Uses the same project key. Choose a model with Code Interpreter support. Standard and agentic file-edit deliveries upload the selected ZIP to OpenAI. Snippets use the text API. |
+| `claude` | Create a Claude API key and set `ANTHROPIC_API_KEY`. Pipkin uses the native Messages API. Increase `max_output_tokens` within your model’s limits if a large edit stops at the output limit. |
+| `grok` | Create an xAI inference API key and set `XAI_API_KEY`. Use a Grok model that supports Chat Completions for your account. |
+| `do` | Create a Serverless Inference model access key and set `DIGITALOCEAN_INFERENCE_KEY`. Use the exact model ID from DigitalOcean’s Model Catalog. A third-party model served by DigitalOcean still uses the `digitalocean` provider and its key. |
+| `local` | Start vLLM and match the port and served model ID. A local server without API-key authentication needs no key. If your server requires one, add `"api_key_env": "VLLM_API_KEY"` to the local profile and set the matching key in `.env`. |
+
+**Provider references** · [OpenAI GPT-5.2](https://developers.openai.com/api/docs/models/gpt-5.2) · [Claude model IDs](https://platform.claude.com/docs/en/about-claude/models/model-ids-and-versions) · [xAI Chat Completions](https://docs.x.ai/developers/rest-api-reference/inference/chat-completions) · [DigitalOcean model catalog](https://docs.digitalocean.com/products/inference/details/models/) · [vLLM serving](https://docs.vllm.ai/en/stable/serving/openai_compatible_server/)
+
+If vLLM is installed and you need to start a test server, run this in a separate terminal:
+
+```sh
+vllm serve Qwen/Qwen3-0.6B --host 127.0.0.1 --port 8000 --max-model-len 8192
+```
+
+Once the model is loaded, check the served ID:
+
+```sh
+curl -fsS http://127.0.0.1:8000/v1/models
+```
+
+If your existing vLLM server uses port 9999, change the profile and check that port instead. Inside the Pipkin Compose stack, use `http://vllm:8000/v1` and match the Compose `VLLM_MODEL`. See [Deploy Pipkin](deploy/README.md).
+
+### 3. Verify and switch
+
+```sh
+pipkin --provider-profiles
+pipkin --provider-profile claude --provider-profiles
+pipkin --provider-profile grok
+```
+
+The list command confirms profile selection without making a provider request. For a small real request that writes no project files, run:
+
+```sh
+printf '%s\n' '{"system":"Keep the reply short.","user":"Reply with OK."}' |
+  pipkin --provider-profile claude --snippet
+```
+
+Replace `claude` with `grok`, `do`, `openai`, or `local` to check the other connections. The snippet test checks the text API. To verify hosted archive support, select a small disposable text file and submit an edit using the `openai-archive` profile, then open the review and inspect the returned diff.
+
+Set `provider_profile` in JSON for a default, or set `PIPKIN_PROVIDER_PROFILE=do` in the home `.env` for an environment override shared by the CLI, TUI, web UI, editor, and MCP. The command-line flag wins for that process. Restart running Pipkin processes after changing `.env`. Named profiles take precedence over legacy provider, endpoint, model and key overrides. Agent profiles separately control the review runner and depth.
+
+For authentication errors, check the selected profile and its `api_key_env`. For a model error, check the ID and account access. For a local connection error, verify that the server is still running at the profile’s host and port.
 
 ## Optional web interface
 
@@ -192,30 +315,6 @@ Hosted agentic runs reuse the original upload within a delivery and upload only 
 ## Provider settings in .env
 
 Uncomment one provider block in `.env.example`. Set `PIPKIN_PROVIDER`, `PIPKIN_BASE_URL`, and `PIPKIN_MODEL` together when switching endpoints. These settings override the corresponding values in `config.json`. `PIPKIN_API_KEY_ENV` names the environment variable that contains your key. Restart Pipkin after changing the environment.
-
-## Switch between model providers
-
-Merge these fields into `~/.config/pipkin/config.json`. Replace the model placeholders with the exact IDs available to your accounts.
-
-```json
-
-{
-  "provider_profile": "grok",
-  "provider_profiles": {
-    "grok": {"provider": "xai", "model": "your-grok-model-id"},
-    "claude": {"provider": "anthropic", "model": "your-claude-model-id"},
-    "do": {"provider": "digitalocean", "model": "your-digitalocean-model-id"},
-    "openai": {"provider": "openai", "model": "gpt-5.2"},
-    "local": {"provider": "vllm", "base_url": "http://127.0.0.1:9999/v1", "model": "your-local-model-id"}
-  }
-}
-```
-
-Add `XAI_API_KEY`, `ANTHROPIC_API_KEY`, and `DIGITALOCEAN_INFERENCE_KEY` to your Pipkin `.env`. DigitalOcean expects a model inference key. Each profile can override `base_url` and `api_key_env`. Claude profiles can also set `max_output_tokens` (default 8192).
-
-Run `pipkin --provider-profiles` to list profiles, or `pipkin --provider-profile claude` to select one for a process. Set `PIPKIN_PROVIDER_PROFILE=do` in your Pipkin `.env` to switch all surfaces, including editor commands. A named profile supplies the endpoint, model, and key variable together. Legacy provider overrides apply when no named profile is selected. Provider profiles select the model connection. Agent profiles still select the review runner and review depth.
-
-Grok, Claude, DigitalOcean, and vLLM support text submissions, snippet replies, and multi-pass agentic edits. Text context limits apply. OpenAI’s hosted archive workflow is available through the existing OpenAI configuration.
 
 ## CLI workflow
 
