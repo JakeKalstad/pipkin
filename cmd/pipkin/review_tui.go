@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -233,10 +234,33 @@ func (a *App) reviewTUI(r *bufio.Reader) error {
 		}
 	}
 }
+
+// Older imported deliveries may have no saved prompt.
+func savedPrompt(dir string) string {
+	f, err := os.Open(filepath.Join(dir, "prompt.txt"))
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, 4097))
+	if err != nil {
+		return ""
+	}
+	if len(data) > 4096 {
+		return strings.TrimSpace(string(data[:4096])) + "…"
+	}
+	return strings.TrimSpace(string(data))
+}
+
 func runReviewScreen(r *bufio.Reader, dir string) error {
 	review, err := workflowReview(dir)
 	if err != nil {
 		return err
+	}
+	prompt := safeDisplayLine(strings.Join(strings.Fields(savedPrompt(dir)), " "))
+	promptLabel := ""
+	if prompt != "" {
+		promptLabel = " Prompt: " + prompt
 	}
 	files := reviewableFiles(review)
 	decisions, err := loadDecisions(dir)
@@ -244,7 +268,7 @@ func runReviewScreen(r *bufio.Reader, dir string) error {
 		return err
 	}
 	if len(files) == 0 {
-		screenLines([]string{"PIPKIN / REVIEW", "No changes in the returned ZIP.", "Press any key to return."})
+		screenLines([]string{"PIPKIN / REVIEW", promptLabel, "No changes in the returned ZIP.", "Press any key to return."})
 		readKey(r)
 		return nil
 	}
@@ -266,7 +290,10 @@ func runReviewScreen(r *bufio.Reader, dir string) error {
 			leftW = w
 		}
 		rightW := max(0, w-leftW-3)
-		height := max(3, h-7)
+		height := max(2, h-7)
+		if promptLabel != "" {
+			height--
+		}
 		if scroll > max(0, len(lines)-height) {
 			scroll = max(0, len(lines)-height)
 		}
@@ -274,8 +301,11 @@ func runReviewScreen(r *bufio.Reader, dir string) error {
 			" PIPKIN / PARCEL INSPECTION  ·  " + filepath.Base(dir),
 			" ↑↓ files/diff  Tab switch  o OK  x reject  u reset  A all OK  X all reject",
 			" Enter diff  v submitted/current  c COPY  b back  q exit",
-			strings.Repeat("─", w),
 		}
+		if promptLabel != "" {
+			header = append(header, trunc(promptLabel, w))
+		}
+		header = append(header, strings.Repeat("─", w))
 		var buffer []string
 		buffer = append(buffer, header...)
 		approved, pending, rejected := 0, 0, 0

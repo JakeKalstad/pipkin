@@ -1,10 +1,15 @@
 {
   "name": "pipkin",
   "displayName": "Pipkin — ZIP Courier",
-  "description": "Pip the otter delivers selected code to an LLM and brings back reviewable ZIPs.",
-  "version": "0.7.0",
+  "description": "Parcel the otter delivers selected code to an LLM and brings back reviewable ZIPs.",
+  "version": "0.8.0",
   "publisher": "pipkin-local",
-  "license": "MIT",
+  "license": "MPL-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JakeKalstad/pipkin.git",
+    "directory": "extension"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },

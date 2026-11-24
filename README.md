@@ -2,9 +2,13 @@
 
 **Pick. Pack. Prompt. Inspect.**
 
-Meet **Pip**, a little parcel-carrying otter who takes *just the code you select* to an LLM and brings back a ZIP you can inspect before applying.
+Meet **Parcel**, an otter with a narrowly defined job. He takes *just the code you select* to an LLM and brings back a ZIP. Pipkin shows you the diff so you can approve changes file by file before anything gets copied into your working tree.
 
-No wandering agent. No mystery edits. Just deliberate, reviewable changes.
+I built Pipkin after a few tools I’d written turned into a Rube Goldberg machine. I wanted the whole workflow in one CLI and a VSCodium extension.
+
+Yes, this does involve reading a diff. We appreciate your patience with this legacy workflow. In recognition of this inconvenience, we’ve provided a TUI and an animal mascot.
+
+![Pipkin landing screen](images/landing.png)
 
 ## Build and install
 
@@ -12,6 +16,10 @@ No wandering agent. No mystery edits. Just deliberate, reviewable changes.
 make test
 make   # builds and installs pipkin, the VSCodium extension
 ```
+
+## End-to-end tests
+
+Run `make test-e2e` on a Unix host with Python 3 and `stty`. The suite builds Pipkin, drives the terminal UI through a pseudo-terminal, exercises the web HTTP endpoints, and connects a dummy MCP client over stdio. Each test uses a temporary workspace and a loopback provider that checks the submitted ZIP before returning a fixture. No API keys or hosted services are required.
 
 ## Configure
 
@@ -30,7 +38,7 @@ Example provider configuration (`~/.config/pipkin/config.json`):
 
 ```json
 {
-  "provider": "openai-archive",
+  "provider": "openai",
   "base_url": "https://api.openai.com/v1",
   "model": "gpt-5.2",
   "api_key_env": "OPENAI_API_KEY",
@@ -42,7 +50,7 @@ Example provider configuration (`~/.config/pipkin/config.json`):
 
 Never commit actual API keys. `.env` files are ignored; `.env.example` is safe to commit.
 
-## Optional web review
+## Optional web interface
 
 Set in your `.env`:
 
@@ -50,7 +58,7 @@ Set in your `.env`:
 LISTEN_URL=http://127.0.0.1:8787
 ```
 
-Start the standalone web viewer:
+Start the standalone web interface:
 
 ```sh
 pipkin --web
@@ -58,7 +66,121 @@ pipkin --web
 
 Visit <http://127.0.0.1:8787>. You can also run `pipkin` normally; it starts the web viewer alongside the interactive TUI when `LISTEN_URL` is set.
 
-The Go `html/template` interface lists saved deliveries, displays submitted ZIP vs result and current workspace vs result side-by-side, and reports model usage. **It is read-only and intentionally bound to loopback** (no password or network exposure). To approve files, use the VSCodium review panel or `pipkin --apply`.
+The Go `html/template` interface offers a recursive file/directory picker, prompt submission, saved deliveries, and submitted ZIP vs result or current workspace vs result comparisons. Approve or reject each proposed file, then explicitly **Copy approved changes** to your working tree. Copying uses the same hash checks, conflict protection, and backups as the TUI. The browser runs only on loopback, uses per-process form tokens, and must not be exposed publicly without authentication. LLM submissions run in the background while the browser stays responsive.
+
+![Pipkin web interface with the file picker and prompt form](images/webui_landing.png)
+
+![Reviewing a diff and approving changes in the Pipkin web interface](images/webui_approve_diff.png)
+
+With `LISTEN_URL`, `langfuse_url`, or `LANGFUSE_BASE_URL` configured, Pipkin displays the corresponding service links in the web header and the terminal picker. Terminals that support OSC 8 make the displayed URLs clickable.
+
+## Web HTTP API
+
+Start with `pipkin --web` and the loopback `LISTEN_URL` shown above. These endpoints serve HTML and accept URL-encoded form data. For every POST, include the `csrf` token from the hidden field on the landing or review page. Successful POSTs return `303 See Other`.
+
+| Method and path | Parameters | Behaviour |
+| --- | --- | --- |
+| `GET /` | — | Show the workspace file picker and saved deliveries. |
+| `POST /submit` | `prompt`, repeated `files` fields, optional `agentic=1` | Start a delivery in the background. Refresh the landing page for its status. |
+| `GET /review` | `job`, optional `mode=submitted\|current` | Show delivery status or compare the result with the submitted ZIP or current workspace. The default is `submitted`. |
+| `POST /decision` | `job`, `action`, `path` for a single file, optional `mode` | Save a decision. Actions are `approve`, `reject`, `reset`, `approve-all`, and `reject-all`. |
+| `POST /copy` | `job`, `confirm=COPY` | Copy approved files into the working tree. Returns `409` if a decision is pending or a workspace conflict blocks copying. |
+
+The web endpoints use a `job` value of the form `PROJECT/JOB-ID`. Use the value from the delivery’s review link.
+
+## MCP
+
+See? We don’t hate agentic development. We just like reading the code sometimes.
+
+Configure your MCP client to launch the local stdio server. Use the full path to the Pipkin executable if your client has a different `PATH`.
+
+- **Command** `pipkin`
+- **Arguments** `["--mcp"]`
+- **Transport** stdio
+
+| Tool | Required arguments | Result |
+| --- | --- | --- |
+| `pipkin_pack` | `root`, `paths` | Creates a ZIP and returns its path and file count. |
+| `pipkin_submit` | `root`, `paths`, `prompt` | Sends the selection to the configured provider and returns the saved job directory and result ZIP. |
+| `pipkin_jobs` | `root` | Lists saved job directories for the project. |
+| `pipkin_review` | `job` | Returns the saved job’s file changes for inspection. |
+| `pipkin_apply` | `job`, `file` | Applies one reviewed file. Requires `PIPKIN_MCP_ALLOW_APPLY=1` in the server’s environment. |
+
+Use absolute paths for `root` and `job`. Use project-relative paths for the `paths` array and the `file` argument. A typical session runs `pipkin_submit` → `pipkin_review`, then applies selected changes through a review interface or the opt-in MCP apply tool.
+
+## Troubleshooting deliveries
+
+- **Wrong model or provider in the TUI** means Pipkin loaded different settings than you expected. `make` installs the binary and extension. Provider settings are read from `PIPKIN_CONFIG` or `~/.config/pipkin/config.json` at startup. `PIPKIN_MODEL`, then `OPENAI_MODEL`, overrides the configured model. Use an API model ID supported by the selected provider and restart Pipkin after editing the settings.
+- **A selected file is missing from the model context** can occur when using an OpenAI-compatible text endpoint. Pipkin sends a text subset of the selected ZIP, limited to 50,000 bytes per file and `max_context_bytes` total (160,000 by default). Omitted paths are listed in the web review and in the delivery's `job.json` under `context_omitted`. Select only the files relevant to the task, or use `openai-archive` to send the selected ZIP as an attachment.
+
+- **Provider returned identical files** means the result ZIP has the same paths and file contents as the selection you sent. Check that the selection includes the files your prompt asks to change and state the expected edit explicitly. For agentic jobs, compare the saved `input.zip`, `draft.zip`, and `result.zip` to see which pass returned the unchanged files.
+- **Langfuse** requires a base URL and the project’s public and secret keys. Set `LANGFUSE_BASE_URL` in your Pipkin `.env`, or set `langfuse_url` in the provider config. Pipkin reports export status after the delivery in the TUI, the web review page, and `job.json`. The trace contains workflow metadata and usage, and excludes prompts and source code.
+
+## Agentic mode
+
+Agentic mode is opt-in. With the `openai` provider pointed at OpenAI’s API, Pipkin uses the hosted code interpreter for two passes. The first produces a draft and the second compares it against the original ZIP, checks the requirements, and refines it. Both passes can run focused checks in the hosted interpreter. Existing `openai-archive` configs still use the hosted archive workflow for both standard and agentic requests.
+
+The `vllm` provider and custom `openai` endpoints use two text requests for agentic mode. The first implements a draft and the second reads the draft and original task to propose corrections. The text context limits apply to both passes. Neither text pass executes project code. In either mode, you approve the final diff before Pipkin copies files into your project.
+
+| Interface | Enable agentic mode |
+| --- | --- |
+| Terminal | Press uppercase `P` to start an agentic prompt. |
+| Web | Check **Agentic mode** before submitting. |
+| CLI | Add `--agentic` to a `--workflow` command. |
+| MCP | Pass `"agentic": true` to `pipkin_submit`. |
+
+Agentic jobs have a 15-minute workflow deadline. If a hosted pass finishes without a generated ZIP, Pipkin switches to text edits for the rest of that delivery. The text context limits apply and the extra request can incur additional API usage. Hosted jobs accept ZIP, TAR, or gzip-compressed TAR results. Pipkin converts TAR results to ZIP before review. Pipkin saves the intermediate archive as `draft.zip` and totals reported token usage across both passes. A failed review leaves the job failed. The final ZIP uses the same approval workflow as other submissions.
+
+### LangGraph profiles
+
+LangGraph is an optional local runner for agentic jobs. Pipkin starts it for the delivery and retains responsibility for provider calls, packaging, and review. The built-in runner remains the default.
+
+```sh
+python3 -m venv ~/.config/pipkin/langgraph-venv
+~/.config/pipkin/langgraph-venv/bin/python -m pip install -r requirements-langgraph.txt
+```
+
+Add these fields to your existing provider configuration. Use the absolute path to your virtual environment’s Python executable.
+
+```json
+{
+  "langgraph_python": "/home/you/.config/pipkin/langgraph-venv/bin/python",
+  "agent_profile": "quick",
+  "agent_profiles": {
+    "quick": {
+      "runner": "langgraph",
+      "review_passes": 1
+    },
+    "thorough": {
+      "runner": "langgraph",
+      "review_passes": 2,
+      "review_focus": "Check regressions, edge cases, and compatibility."
+    }
+  }
+}
+```
+
+Edit `agent_profiles` to add or update named profiles. Each LangGraph profile runs one draft followed by one to three review passes. Additional passes use the preceding revision and can incur additional model usage. Use `pipkin --agent-profiles` to list profiles and see which is active. Set `PIPKIN_AGENT_PROFILE=thorough` in your environment or pass `--agent-profile thorough` for one process. Select `builtin` to return to the built-in runner. The chosen profile applies to agentic submissions in the TUI, web UI, CLI, and MCP.
+
+The terminal reviewer shows a single-line preview of the original prompt. In the web reviewer, expand **Original prompt** to read up to 4 KiB. The saved delivery retains the complete `prompt.txt`.
+
+## Provider settings in .env
+
+Uncomment one provider block in `.env.example`. Set `PIPKIN_PROVIDER`, `PIPKIN_BASE_URL`, and `PIPKIN_MODEL` together when switching endpoints. These settings override the corresponding values in `config.json`. `PIPKIN_API_KEY_ENV` names the environment variable that contains your key. Restart Pipkin after changing the environment.
+
+## Local vLLM
+
+Point Pipkin at your running vLLM server and set `model` to the name it serves.
+
+```json
+{
+  "provider": "vllm",
+  "base_url": "http://127.0.0.1:8000/v1",
+  "model": "your-served-model"
+}
+```
+
+The local provider uses `/chat/completions` for standard and agentic submissions. To use a server configured with API-key authentication, add `"api_key_env": "VLLM_API_KEY"` and set that variable in your Pipkin environment. If a model override is set in `PIPKIN_MODEL` or `OPENAI_MODEL`, it must match the local server’s model name.
 
 ## Existing workflow
 
@@ -66,7 +188,7 @@ The Go `html/template` interface lists saved deliveries, displays submitted ZIP 
 - In VSCodium, right-click files → **Pipkin: Send Selected Files to LLM**.
 - Review a session in **Pipkin Deliveries**, inspect native diffs and approve individual files.
 - OpenCode and Hermes can use `pipkin --mcp` with the `pipkin_pack`, `pipkin_submit`, `pipkin_jobs`, `pipkin_review`, and `pipkin_apply` tools.
-- Archives and sessions default to `~/pipkin/outputs` (`/home/jake/pipkin/outputs` on your machine). Override using `PIPKIN_OUTPUT_DIR`.
+- Archives and sessions default to `~/pipkin/outputs`. Override using `PIPKIN_OUTPUT_DIR`.
 
 ```sh
 pipkin --workflow --files-from /tmp/files.json --prompt-file /tmp/prompt.txt .
@@ -74,15 +196,25 @@ pipkin --review ~/pipkin/outputs/jobs/PROJECT/job-ID
 pipkin --git-diff ~/pipkin/outputs/jobs/PROJECT/job-ID
 ```
 
-**Pip's rule:** he delivers changes; *you* decide what gets committed.
+**Parcel delivers the ZIP. You decide what makes it into the commit.**
 
 ## Terminal interface
 
-On wide terminals, the file picker shares the screen with Pip, recent ZIPs, and saved requests. All LLM submissions—including the legacy text provider—are now recorded as **reviewable sessions**.
+On wide terminals, the file picker shares the screen with Parcel, recent ZIPs, and saved requests. All LLM submissions—including the legacy text provider—are now recorded as **reviewable sessions**.
 
-**File picker:** `space` select, `z` package, `p` prompt and send, `r` review completed deliveries, `i` import an existing `<project>.zip` + `<project>-llm.zip` pair from the output directory, `q` quit.
+**File picker:** `space` select, `z` package, `p` prompt and send, uppercase `P` start an agentic prompt with OpenAI or vLLM, `r` review completed deliveries, `i` import an existing `<project>.zip` + `<project>-llm.zip` pair from the output directory, `q` quit.
+
+### Prompt the selected files
+
+![Composing a prompt for the selected files](images/prompting.png)
+
+### While the model works
+
+![Pipkin running a submitted request](images/running.png)
 
 **Review screen:** press `r`, select a delivery with the arrow keys and Enter. The left pane lists changed files; the right pane shows the actual unified Git diff (green additions, red deletions). On smaller terminals, press Enter to open a full-screen diff.
+
+![Reviewing a diff and approving individual changes](images/diffing_approving.png)
 
 | Key | Action |
 |---|---|
@@ -96,6 +228,26 @@ On wide terminals, the file picker shares the screen with Pip, recent ZIPs, and 
 | `c` | **Copy** approved changes into your project (requires every file to be decided and a separate `Y` confirmation) |
 | `b` / `q` | Back / exit the reviewer |
 
+![Confirming that approved changes should be copied to the working tree](images/copy_confirm.png)
+
 Decisions are stored under each delivery as `decisions.json` and survive closing Pipkin. Rejected files are never copied. Before copying, Pipkin checks **all** destination paths and original SHA-256 hashes; a conflicting local edit stops the entire copy. Previous file contents are backed up inside the session. Copying does not commit or stage changes—review with `git diff` and run your tests before committing.
 
-The web viewer and VSCodium diff viewer continue to work as before.
+## VSCodium
+
+### File Explorer
+
+![Pipkin commands in the VSCodium File Explorer context menu](images/vscodium_pipkin_fileviewer_context_commands.png)
+
+### In the editor
+
+#### Run Pipkin commands
+
+![Pipkin commands for the open file](images/vs_infile_pipkin_commands.png)
+
+#### Prompt from a selection
+
+![Pipkin commands for a text selection in VSCodium](images/vscodium_pipkin_selection_context_commands.png)
+
+## Licence
+
+This source code is licensed under the Mozilla Public License 2.0. See [LICENSE](LICENSE).

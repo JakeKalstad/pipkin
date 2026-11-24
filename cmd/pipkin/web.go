@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type webSession struct{ ID, Project, Status, Model, Created string }
@@ -21,60 +25,49 @@ type webLine struct {
 	Text   string
 }
 type webFile struct {
-	Path, Status, WorkspaceStatus string
-	Before, After                 []webLine
+	Path, Status, WorkspaceStatus, Decision string
+	Applied                                 bool
+	Before, After                           []webLine
+}
+type webDir struct {
+	Name, Rel              string
+	Dir, Ignored, Selected bool
+	Children               []webDir
 }
 type webPage struct {
-	Title, Mode, Job, Error string
-	Sessions                []webSession
-	Files                   []webFile
-	JobInfo                 WorkflowJob
-	Root                    string
-	Dirs                    []webDir
+	Title, Mode, Job, Error, Notice, Root, Token string
+	Sessions                                     []webSession
+	Files                                        []webFile
+	Dirs                                         []webDir
+	JobInfo                                      WorkflowJob
+	Prompt                                       string
+	Links                                        []serviceLink
+	AgenticAvailable                             bool
+	AgentProfile                                 string
+	Approved, Rejected, Pending, Applied         int
 }
 
-type webDir struct {
-	Name     string
-	Rel      string
-	Dir      bool
-	Ignored  bool
-	Children []webDir
+var reviewHTML = template.Must(template.ParseFS(webTemplateFiles, "web.html"))
+
+type serviceLink struct {
+	Label string
+	URL   string
 }
 
-var reviewHTML = template.Must(template.New("review").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{.Title}} · Pipkin</title><style>
-:root{color-scheme:dark;font:15px system-ui, sans-serif;background:#111b22;color:#eaf1f2}body{margin:0}header{padding:1.4rem 2rem;border-bottom:1px solid #34414b;display:flex;align-items:center;gap:1rem}header a{font-size:1.5rem;font-weight:800;color:#e9faf3;text-decoration:none}.sub{color:#91a5ad}.container{max-width:1250px;margin:2rem auto;padding:0 1rem}a{color:#89ddb7}h1{font-size:1.7rem;margin-bottom:.4rem}h2{font-size:1.1rem}.card{display:block;background:#1a2831;border:1px solid #354751;border-radius:12px;padding:1rem 1.3rem;margin:1rem 0;text-decoration:none;color:inherit}.card:hover{border-color:#87d9b6}.pill{font-size:.75rem;border:1px solid #51626a;border-radius:12px;padding:.15rem .55rem}.meta{display:flex;flex-wrap:wrap;gap:.8rem;color:#b0c0c5}nav{margin:1rem 0}.diff{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#354751;border:1px solid #354751;border-radius:9px;overflow:hidden}.pane{min-width:0;background:#16242c}.pane h3{font-size:.85rem;background:#24343d;margin:0;padding:.7rem}.pane pre{margin:0;padding:.8rem;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 ui-monospace,monospace;max-height:550px;overflow:auto}.file{margin:2rem 0}.warn{color:#ffc68a}.error{color:#ffaaaa}.empty{padding:3rem 1rem;text-align:center;color:#adc0c6}@media(max-width:700px){.diff{grid-template-columns:1fr}}
-</style></head><body><header><a href="/">🦦 Pipkin</a><span class="sub">Pick. Pack. Prompt. Inspect.</span></header><main class="container">
-{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-{{if not .Job}}<h1>Saved deliveries</h1><p class="sub">Your parcel-carrying code otter keeps every returned ZIP safely outside the repository.</p>{{range .Sessions}}<a class="card" href="/review?job={{.Project}}/{{.ID}}"><strong>{{.Project}} / {{.ID}}</strong> <span class="pill">{{.Status}}</span><p class="meta">{{.Model}} · {{.Created}}</p></a>{{else}}<div class="empty">No sessions yet. Send Pipkin a ZIP and he'll bring your changes back.</div>{{end}}
-{{else}}<p><a href="/">← All deliveries</a></p><h1>{{.JobInfo.ID}}</h1><p class="meta">{{.JobInfo.Provider}} · {{.JobInfo.Model}} · {{.JobInfo.Status}} · {{.JobInfo.InputTokens}} input tokens · {{.JobInfo.OutputTokens}} output tokens</p><nav><a href="/review?job={{.Job}}&amp;mode=submitted">Submitted vs result</a> &nbsp; | &nbsp; <a href="/review?job={{.Job}}&amp;mode=current">Current workspace vs result</a></nav>
-
-<h2>Project files and directories</h2>
-<ul>
-{{- range .Dirs}}
-  <li>{{template "dir" .}}</li>
-{{- end}}
-</ul>
-
-{{define "dir"}}
-  {{- if .Dir}}
-    <details open>
-      <summary>{{.Name}}{{if .Ignored}} (ignored){{end}}</summary>
-      {{- if .Children}}
-        <ul>
-        {{- range .Children}}
-          <li>{{template "dir" .}}</li>
-        {{- end}}
-        </ul>
-      {{- end}}
-    </details>
-  {{- else}}
-    {{.Name}}{{if .Ignored}} (ignored){{end}}
-  {{- end}}
-{{end}}
-
-{{range .Files}}<section class="file"><h2>{{.Path}} <span class="pill">{{.Status}}</span></h2><p class="sub">Workspace: {{.WorkspaceStatus}}</p><div class="diff"><div class="pane"><h3>{{if eq $.Mode "current"}}Current workspace{{else}}Submitted ZIP{{end}}</h3><pre>{{range .Before}}{{.Number}}  {{.Text}}
-{{end}}</pre></div><div class="pane"><h3>Returned ZIP</h3><pre>{{range .After}}{{.Number}}  {{.Text}}
-{{end}}</pre></div></div></section>{{else}}<div class="empty">No differences for this comparison.</div>{{end}}<p class="warn">Read-only review. Approve files through VSCodium or CLI; no changes are applied here.</p>{{end}}</main></body></html>`))
+func configuredLinks(cfg Config) []serviceLink {
+	var links []serviceLink
+	if raw := strings.TrimSpace(os.Getenv("LISTEN_URL")); raw != "" {
+		if addr, err := parseListen(raw); err == nil {
+			links = append(links, serviceLink{"Web UI", "http://" + addr})
+		}
+	}
+	raw := langfuseURL(cfg)
+	if u, err := url.Parse(raw); err == nil && u.Hostname() != "" && u.User == nil &&
+		(u.Scheme == "http" || u.Scheme == "https") && strings.IndexFunc(raw, unicode.IsControl) == -1 {
+		links = append(links, serviceLink{"Langfuse", u.String()})
+	}
+	return links
+}
 
 func serveWebFromEnv() error {
 	raw := strings.TrimSpace(os.Getenv("LISTEN_URL"))
@@ -91,7 +84,7 @@ func parseListen(raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if u.Scheme != "http" || u.Host == "" || u.User != nil || u.Path != "" && u.Path != "/" || u.RawQuery != "" || u.Fragment != "" {
+	if u.Scheme != "http" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
 		return "", errors.New("LISTEN_URL must be an http://loopback-host:port URL")
 	}
 	host, port, err := net.SplitHostPort(u.Host)
@@ -100,7 +93,7 @@ func parseListen(raw string) (string, error) {
 	}
 	ip := net.ParseIP(host)
 	if !(strings.EqualFold(host, "localhost") || ip != nil && ip.IsLoopback()) {
-		return "", errors.New("web UI has no authentication; bind only to 127.0.0.1, ::1, or localhost")
+		return "", errors.New("web UI has no remote authentication; bind only to loopback")
 	}
 	if port == "" {
 		return "", errors.New("LISTEN_URL requires port")
@@ -126,8 +119,7 @@ func listWebSessions() []webSession {
 			if !job.IsDir() || job.Type()&os.ModeSymlink != 0 || !strings.HasPrefix(job.Name(), "job-") {
 				continue
 			}
-			p := filepath.Join(base, proj.Name(), job.Name(), "job.json")
-			b, err := os.ReadFile(p)
+			b, err := os.ReadFile(filepath.Join(base, proj.Name(), job.Name(), "job.json"))
 			if err != nil {
 				continue
 			}
@@ -141,26 +133,24 @@ func listWebSessions() []webSession {
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].Created > sessions[j].Created })
 	return sessions
 }
-
 func webLines(b []byte) []webLine {
 	if len(b) == 0 {
 		return nil
 	}
 	if len(b) > 256*1024 {
-		return []webLine{{Text: "[File too large for browser preview; use VSCodium diff]"}}
+		return []webLine{{Text: "[File too large for browser preview]"}}
 	}
 	if strings.ContainsRune(string(b), '\x00') {
 		return []webLine{{Text: "[Binary file]"}}
 	}
-	lines := strings.Split(string(b), "\n")
-	out := make([]webLine, 0, len(lines))
-	for i, s := range lines {
+	parts := strings.Split(string(b), "\n")
+	out := make([]webLine, 0, len(parts))
+	for i, s := range parts {
 		out = append(out, webLine{Number: i + 1, Text: s})
 	}
 	return out
 }
-
-func buildWebDirTree(root string, base string) ([]webDir, error) {
+func buildWebDirTree(root, base string) ([]webDir, error) {
 	entries, err := os.ReadDir(base)
 	if err != nil {
 		return nil, err
@@ -171,49 +161,174 @@ func buildWebDirTree(root string, base string) ([]webDir, error) {
 		}
 		return strings.ToLower(entries[i].Name()) < strings.ToLower(entries[j].Name())
 	})
-	var dirs []webDir
+	out := []webDir{}
 	for _, e := range entries {
+		if e.Type()&os.ModeSymlink != 0 {
+			continue
+		}
 		name := e.Name()
 		rel := filepath.Join(root, name)
 		ig := ignored(name, e.IsDir())
-		wd := webDir{Name: name, Rel: rel, Dir: e.IsDir(), Ignored: ig}
+		item := webDir{Name: name, Rel: filepath.ToSlash(rel), Dir: e.IsDir(), Ignored: ig, Selected: !ig}
 		if e.IsDir() && !ig {
-			children, err := buildWebDirTree(rel, filepath.Join(base, name))
-			if err == nil {
-				wd.Children = children
+			if children, err := buildWebDirTree(rel, filepath.Join(base, name)); err == nil {
+				item.Children = children
 			}
 		}
-		dirs = append(dirs, wd)
+		out = append(out, item)
 	}
-	return dirs, nil
+	return out, nil
 }
-
-func webHandler() http.Handler {
+func webJobDir(rel string) (string, error) {
+	parts := strings.Split(rel, "/")
+	if len(parts) != 2 || parts[0] == "" || !strings.HasPrefix(parts[1], "job-") {
+		return "", errors.New("invalid job")
+	}
+	for _, p := range parts {
+		if p == "." || p == ".." || filepath.Base(p) != p || strings.Contains(p, "\\") {
+			return "", errors.New("invalid job")
+		}
+	}
+	base := filepath.Join(outputDirectory(), "jobs")
+	dir := filepath.Join(base, parts[0], parts[1])
+	for _, p := range []string{filepath.Join(base, parts[0]), dir} {
+		fi, err := os.Lstat(p)
+		if err != nil || !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
+			return "", errors.New("unknown job")
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "job.json")); err != nil {
+		return "", errors.New("unknown job")
+	}
+	return dir, nil
+}
+func webHandler() http.Handler { cwd, _ := os.Getwd(); return webHandlerForRoot(cwd) }
+func webHandlerForRoot(root string) http.Handler {
+	root, _ = filepath.Abs(root)
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		panic(err)
+	}
+	token := hex.EncodeToString(tokenBytes)
 	mux := http.NewServeMux()
-	render := func(w http.ResponseWriter, p webPage) {
+	render := func(w http.ResponseWriter, page webPage) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'")
-		_ = reviewHTML.Execute(w, p)
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+		page.Token = token
+		cfg := loadConfig()
+		page.Links = configuredLinks(cfg)
+		page.AgenticAvailable = cfg.supportsAgentic()
+		page.AgentProfile, _, _ = cfg.activeAgentProfile()
+		if err := reviewHTML.ExecuteTemplate(w, "web.html", page); err != nil {
+			fmt.Fprintln(os.Stderr, "web template:", err)
+		}
+	}
+	denyMethod := func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != "POST" {
+			http.Error(w, "POST required", 405)
+			return true
+		}
+		return false
+	}
+	protected := func(w http.ResponseWriter, r *http.Request) bool {
+		if denyMethod(w, r) {
+			return false
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", 400)
+			return false
+		}
+		if r.PostForm.Get("csrf") != token {
+			http.Error(w, "invalid request token", 403)
+			return false
+		}
+		if origin := r.Header.Get("Origin"); origin != "" {
+			u, e := url.Parse(origin)
+			if e != nil || u.Host != r.Host || u.Scheme != "http" {
+				http.Error(w, "cross-origin request refused", 403)
+				return false
+			}
+		}
+		if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+			http.Error(w, "cross-site request refused", 403)
+			return false
+		}
+		return true
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
 			return
 		}
-		render(w, webPage{Title: "Deliveries", Sessions: listWebSessions()})
-	})
-	mux.HandleFunc("/review", func(w http.ResponseWriter, r *http.Request) {
-		rel := r.URL.Query().Get("job")
-		parts := strings.Split(rel, "/")
-		if len(parts) != 2 || parts[0] == "" || !strings.HasPrefix(parts[1], "job-") || (filepath.Base(parts[0]) != parts[0] || parts[0] == "..") || (filepath.Base(parts[1]) != parts[1] || parts[1] == "..") {
-			http.Error(w, "invalid job", 400)
+		if r.Method != "GET" {
+			http.Error(w, "GET required", 405)
 			return
 		}
-		dir := filepath.Join(outputDirectory(), "jobs", parts[0], parts[1])
-		if _, err := mcpJob(dir); err != nil {
-			http.Error(w, "unknown job", 404)
+		dirs, err := buildWebDirTree("", root)
+		page := webPage{Title: "Pack a parcel", Root: root, Sessions: listWebSessions(), Dirs: dirs, Notice: r.URL.Query().Get("notice")}
+		if err != nil {
+			page.Error = err.Error()
+		}
+		render(w, page)
+	})
+	mux.HandleFunc("/submit", func(w http.ResponseWriter, r *http.Request) {
+		if !protected(w, r) {
+			return
+		}
+		prompt := strings.TrimSpace(r.PostForm.Get("prompt"))
+		selected := r.PostForm["files"]
+		if prompt == "" || len(selected) == 0 || len(selected) > 20000 {
+			http.Error(w, "select files and provide a prompt", 400)
+			return
+		}
+		// Reuse the CLI's path validation and recursive ignore rules; never trust form paths.
+		manifest, err := os.CreateTemp("", "pipkin-web-files-*.json")
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		defer os.Remove(manifest.Name())
+		if err = json.NewEncoder(manifest).Encode(selected); err != nil {
+			manifest.Close()
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		manifest.Close()
+		files, err := filesFromJSON(root, manifest.Name())
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		agentic := r.PostForm.Get("agentic") == "1"
+		if agentic && !loadConfig().supportsAgentic() {
+			http.Error(w, "agentic mode requires OpenAI or vLLM", 400)
+			return
+		}
+		// Persistent jobs continue independently of browser connections.
+		go func() {
+			ctx := withWorkflowEvents(context.Background(), func(event workflowEvent) {
+				if event.Type != "delta" {
+					writeWorkflowEvent(os.Stderr, event)
+				}
+			})
+			if err := workflowSendFiles(ctx, root, files, prompt, agentic); err != nil {
+				fmt.Fprintln(os.Stderr, "Pipkin web submission:", err)
+			}
+		}()
+		http.Redirect(w, r, "/?notice="+url.QueryEscape("Delivery started. Refresh to see its saved session and status."), http.StatusSeeOther)
+	})
+	mux.HandleFunc("/review", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			http.Error(w, "GET required", 405)
+			return
+		}
+		rel := r.URL.Query().Get("job")
+		dir, err := webJobDir(rel)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
 			return
 		}
 		data, err := os.ReadFile(filepath.Join(dir, "job.json"))
@@ -230,19 +345,42 @@ func webHandler() http.Handler {
 		if mode != "current" {
 			mode = "submitted"
 		}
-		rv, err := workflowReview(dir)
-		if err != nil {
-			render(w, webPage{Title: "Review", Job: rel, JobInfo: info, Mode: mode, Error: err.Error()})
+		page := webPage{Title: "Review", Job: rel, JobInfo: info, Prompt: savedPrompt(dir), Mode: mode, Root: info.Root, Notice: r.URL.Query().Get("notice")}
+		if info.Status == "running" {
+			page.Notice = "Delivery in progress. Refresh for updates."
+			render(w, page)
 			return
 		}
-		page := webPage{Title: "Review", Job: rel, JobInfo: info, Mode: mode, Root: info.Root}
-
-		dirs, err := buildWebDirTree("", info.Root)
-		if err == nil {
-			page.Dirs = dirs
+		if info.Status != "completed" {
+			page.Error = info.Error
+			render(w, page)
+			return
 		}
-
-		for _, f := range rv.Files {
+		rv, err := workflowReview(dir)
+		if err != nil {
+			page.Error = err.Error()
+			render(w, page)
+			return
+		}
+		decisions, err := loadDecisions(dir)
+		if err != nil {
+			page.Error = err.Error()
+			render(w, page)
+			return
+		}
+		for _, f := range reviewableFiles(rv) {
+			decision := decisions.Decisions[f.Path]
+			switch decision {
+			case decisionApproved:
+				page.Approved++
+			case decisionRejected:
+				page.Rejected++
+			default:
+				page.Pending++
+			}
+			if decisions.Applied[f.Path] {
+				page.Applied++
+			}
 			left := f.Before
 			if mode == "current" {
 				left = f.Current
@@ -254,12 +392,105 @@ func webHandler() http.Handler {
 			if f.After != "" {
 				after, _ = os.ReadFile(f.After)
 			}
-			if mode == "current" && string(before) == string(after) {
-				continue
-			}
-			page.Files = append(page.Files, webFile{Path: f.Path, Status: f.Status, WorkspaceStatus: f.WorkspaceStatus, Before: webLines(before), After: webLines(after)})
+			page.Files = append(page.Files, webFile{Path: f.Path, Status: f.Status, WorkspaceStatus: f.WorkspaceStatus, Decision: decision, Applied: decisions.Applied[f.Path], Before: webLines(before), After: webLines(after)})
 		}
 		render(w, page)
+	})
+	mux.HandleFunc("/decision", func(w http.ResponseWriter, r *http.Request) {
+		if !protected(w, r) {
+			return
+		}
+		rel := r.PostForm.Get("job")
+		dir, err := webJobDir(rel)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		rv, err := workflowReview(dir)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		d, err := loadDecisions(dir)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		action := r.PostForm.Get("action")
+		path := r.PostForm.Get("path")
+		value := ""
+		switch action {
+		case "approve", "approve-all":
+			value = decisionApproved
+		case "reject", "reject-all":
+			value = decisionRejected
+		case "reset":
+			value = ""
+		default:
+			http.Error(w, "unknown decision", 400)
+			return
+		}
+		valid := false
+		for _, f := range reviewableFiles(rv) {
+			if strings.HasSuffix(action, "-all") || f.Path == path {
+				valid = true
+				if d.Applied[f.Path] {
+					continue
+				}
+				if value == "" {
+					delete(d.Decisions, f.Path)
+				} else {
+					d.Decisions[f.Path] = value
+				}
+			}
+		}
+		if !valid {
+			http.Error(w, "unknown file", 400)
+			return
+		}
+		if err := saveDecisions(dir, d); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		http.Redirect(w, r, "/review?job="+url.QueryEscape(rel)+"&mode="+url.QueryEscape(r.PostForm.Get("mode")), http.StatusSeeOther)
+	})
+	mux.HandleFunc("/copy", func(w http.ResponseWriter, r *http.Request) {
+		if !protected(w, r) {
+			return
+		}
+		rel := r.PostForm.Get("job")
+		dir, err := webJobDir(rel)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		rv, err := workflowReview(dir)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		files := reviewableFiles(rv)
+		d, err := loadDecisions(dir)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		for _, f := range files {
+			if !d.Applied[f.Path] && d.Decisions[f.Path] != decisionApproved && d.Decisions[f.Path] != decisionRejected {
+				http.Error(w, "review every change before copying", 409)
+				return
+			}
+		}
+		if r.PostForm.Get("confirm") != "COPY" {
+			http.Error(w, "explicit COPY confirmation required", 400)
+			return
+		}
+		n, err := copyApprovedChanges(dir, files, &d)
+		if err != nil {
+			http.Error(w, "Copy blocked: "+err.Error(), 409)
+			return
+		}
+		http.Redirect(w, r, "/review?job="+url.QueryEscape(rel)+"&notice="+url.QueryEscape(fmt.Sprintf("Copied %d approved files. Rejected files left untouched.", n)), http.StatusSeeOther)
 	})
 	return mux
 }
@@ -269,6 +500,6 @@ func serveWeb(raw string) error {
 		return err
 	}
 	server := &http.Server{Addr: addr, Handler: webHandler(), ReadHeaderTimeout: 5 * time.Second}
-	fmt.Fprintln(os.Stderr, "Pipkin web review: http://"+addr)
+	fmt.Fprintln(os.Stderr, "Pipkin web UI: http://"+addr)
 	return server.ListenAndServe()
 }

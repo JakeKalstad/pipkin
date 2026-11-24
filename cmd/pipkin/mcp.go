@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,11 +27,12 @@ type mcpCall struct {
 	Arguments json.RawMessage `json:"arguments"`
 }
 type mcpArgs struct {
-	Root   string   `json:"root"`
-	Paths  []string `json:"paths"`
-	Prompt string   `json:"prompt"`
-	Job    string   `json:"job"`
-	File   string   `json:"file"`
+	Root    string   `json:"root"`
+	Paths   []string `json:"paths"`
+	Agentic bool     `json:"agentic"`
+	Prompt  string   `json:"prompt"`
+	Job     string   `json:"job"`
+	File    string   `json:"file"`
 }
 
 func mcpTool(name, description string, properties map[string]any, required ...string) map[string]any {
@@ -42,7 +44,7 @@ func mcpTools() []map[string]any {
 	job := map[string]any{"type": "string", "description": "Absolute path to a Pipkin saved job directory"}
 	return []map[string]any{
 		mcpTool("pipkin_pack", "Create a ZIP from explicitly selected files and directories, without changing the repository", map[string]any{"root": root, "paths": paths}, "root", "paths"),
-		mcpTool("pipkin_submit", "Submit selected files as a ZIP with an instruction prompt. This invokes the configured external LLM and incurs API usage. Saves input, result and metadata separately, without applying changes", map[string]any{"root": root, "paths": paths, "prompt": map[string]any{"type": "string"}}, "root", "paths", "prompt"),
+		mcpTool("pipkin_submit", "Submit selected files as a ZIP with an instruction prompt. This invokes the configured external LLM and incurs API usage. Saves input, result and metadata separately, without applying changes", map[string]any{"root": root, "paths": paths, "prompt": map[string]any{"type": "string"}, "agentic": map[string]any{"type": "boolean", "description": "Run implementation and independent review with OpenAI or vLLM"}}, "root", "paths", "prompt"),
 		mcpTool("pipkin_jobs", "List saved Pipkin sessions for a project", map[string]any{"root": root}, "root"),
 		mcpTool("pipkin_review", "Review changed files in a completed Pipkin session, without applying them", map[string]any{"job": job}, "job"),
 		mcpTool("pipkin_apply", "Apply ONE reviewed file to the working tree after explicit approval. Disabled by default; enable using PIPKIN_MCP_ALLOW_APPLY=1", map[string]any{"job": job, "file": map[string]any{"type": "string", "description": "Project-relative file to apply"}}, "job", "file"),
@@ -145,22 +147,15 @@ func mcpCallTool(call mcpCall) (any, error) {
 		if err = os.WriteFile(pf, []byte(a.Prompt), 0600); err != nil {
 			return nil, err
 		}
-		// Capture this call's job event rather than guessing which concurrent job is newest.
-		var events bytes.Buffer
-		previous := eventOutput
-		eventOutput = io.MultiWriter(os.Stderr, &events)
-		err = workflowSend(root, mf, pf)
-		eventOutput = previous
-		if err != nil {
-			return nil, err
-		}
 		var jobPath string
-		for _, line := range strings.Split(events.String(), "\n") {
-			var ev workflowEvent
-			if json.Unmarshal([]byte(line), &ev) == nil && ev.Type == "job" {
-				jobPath = ev.Job
-				break
+		ctx := withWorkflowEvents(context.Background(), func(event workflowEvent) {
+			writeWorkflowEvent(os.Stderr, event)
+			if event.Type == "job" {
+				jobPath = event.Job
 			}
+		})
+		if err := workflowSend(ctx, root, mf, pf, a.Agentic); err != nil {
+			return nil, err
 		}
 		if jobPath == "" {
 			return nil, errors.New("workflow finished without saved session")
@@ -231,9 +226,6 @@ func mcpListJobs(root string) ([]string, error) {
 	return jobs, nil
 }
 func serveMCP(r io.Reader, w io.Writer) error {
-	old := eventOutput
-	eventOutput = os.Stderr
-	defer func() { eventOutput = old }()
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 4096), 8<<20)
 	encoder := json.NewEncoder(w)

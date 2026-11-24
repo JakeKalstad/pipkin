@@ -4,4 +4,4 @@
 /pipkin
 *.vsix
 .pipkin/
-.confiure/pipkin/config.json
+.configure/pipkin/config.json

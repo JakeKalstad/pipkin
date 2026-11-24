@@ -50,7 +50,7 @@ func TestLegacyLLMAddsFileToArchive(t *testing.T) {
 			defer srv.Close()
 			output := filepath.Join(t.TempDir(), "out.zip")
 			cfg := Config{BaseURL: srv.URL, Model: "test", APIKeyEnv: "PIPKIN_TEST_KEY", MaxContextBytes: 100000}
-			err := sendOpenAI(context.Background(), cfg, root, files, input, output, "test")
+			err := sendOpenAI(context.Background(), cfg, root, input, output, "test", nil)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("got err %v wantErr %v", err, tc.wantErr)
 			}
@@ -74,5 +74,50 @@ func TestLegacyLLMAddsFileToArchive(t *testing.T) {
 				t.Fatal("empty error")
 			}
 		})
+	}
+}
+
+func TestLegacyLLMReportsOmittedContext(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "input.zip")
+	zipFixture(t, input, map[string]string{"main.go": "package main", "README.md": strings.Repeat("x", 50001)})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Messages []struct{ Content string }
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		if len(request.Messages) != 2 || !strings.Contains(request.Messages[1].Content, "package main") || strings.Contains(request.Messages[1].Content, "README.md") {
+			t.Error("unexpected model context")
+		}
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"{\"changes\":[]}"}}]}`)
+	}))
+	defer server.Close()
+	t.Setenv("PIPKIN_TEST_KEY", "dummy")
+	cfg := Config{BaseURL: server.URL, Model: "test", APIKeyEnv: "PIPKIN_TEST_KEY", MaxContextBytes: 160000}
+	var omitted []string
+	if err := sendOpenAI(context.Background(), cfg, root, input, filepath.Join(root, "result.zip"), "Edit docs", &omitted); err != nil {
+		t.Fatal(err)
+	}
+	if len(omitted) != 1 || omitted[0] != "README.md" {
+		t.Fatalf("omitted paths: %v", omitted)
+	}
+}
+
+func TestConfigModelEnvironmentOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"provider":"openai-archive","model":"configured-model"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PIPKIN_CONFIG", path)
+	t.Setenv("PIPKIN_MODEL", "")
+	t.Setenv("OPENAI_MODEL", "openai-env-model")
+	if cfg := loadConfig(); cfg.Model != "openai-env-model" || cfg.Provider != "openai-archive" {
+		t.Fatalf("model and provider: %q, %q", cfg.Model, cfg.Provider)
+	}
+	t.Setenv("PIPKIN_MODEL", "pipkin-env-model")
+	if got := loadConfig().Model; got != "pipkin-env-model" {
+		t.Fatalf("model: %q", got)
 	}
 }

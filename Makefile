@@ -1,9 +1,9 @@
 
-.PHONY: all build install extension install-extension test clean
+.PHONY: all build install extension install-extension test test-e2e clean
 
 APP := pipkin
 EXT_DIR := extension
-VSIX := pipkin-vscodium-0.7.0.vsix
+VSIX := pipkin-vscodium-0.8.0.vsix
 
 all: install install-extension
 
@@ -22,6 +22,9 @@ install-extension: extension
 test:
 	go test ./...
 	cd $(EXT_DIR) && npm test
+
+test-e2e: build
+	python3 tests/e2e.py ./$(APP)
 
 clean:
 	rm -f $(APP) $(VSIX)

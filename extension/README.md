@@ -6,3 +6,7 @@ CLI users can invoke `pipkin --mcp` for OpenCode/Hermes MCP integration. The ext
 
 
 The **Pipkin** activity-bar view now lists saved sessions. Open a session for native Submitted ↔ Result or Current ↔ Result diffs.
+
+## Licence
+
+This source code is licensed under the Mozilla Public License 2.0. See [LICENSE](LICENSE).

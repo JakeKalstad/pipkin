@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -103,18 +104,19 @@ func (a *App) sidePanel(width int) []string {
 	lines := []string{
 		`  PIPKIN / CODE COURIER`,
 		``,
-		`       _.._`,
-		`     .'    '.        __`,
-		`    /  o  o  \      /  \`,
-		`   |    __    |    /____\`,
-		`   |  \____/  |   | ZIP |`,
-		`    \  .--.  /    |____|`,
-		`     '.___.'      /_||_\`,
-		`      /  \  \`,
-		`     /____\__\`,
-		``,
-		`  Small parcels. Big ideas.`,
-		``,
+		"       _         _",
+		"      ( `-.___.-' )",
+		"       /  o   o  \\",
+		"      |  = .Y. =  |",
+		"       \\_.-\\_/-._/",
+		"       /  .----.  \\",
+		"      /  (| ZIP |) \\",
+		"     (    '----'    ) _..-.",
+		"      '._/    \\_.'--'_.-'",
+		"         `----'  `---'",
+		"",
+		"  Parcel the otter",
+		"",
 		`  DELIVERY STATUS`,
 	}
 	if a.busy {
@@ -150,16 +152,34 @@ func (a *App) render() {
 		rightWidth = min(43, w/3)
 		leftWidth = w - rightWidth - 3
 	}
-	rows := max(3, h-7)
+	links := configuredLinks(a.cfg)
+	screenHeight := h - len(links)
+	if a.traceStatus != "" {
+		screenHeight--
+	}
+	rows := max(1, screenHeight-7)
 	if a.cursor < a.offset {
 		a.offset = a.cursor
 	}
 	if a.cursor >= a.offset+rows {
 		a.offset = a.cursor - rows + 1
 	}
+	shortcuts := "  ↑↓ move  ←→ expand  Space select  z ZIP  p LLM"
+	if a.cfg.supportsAgentic() {
+		shortcuts += "  P Agentic"
+	}
+	shortcuts += "  r Review  i Import  q Quit"
+	if w < utf8.RuneCountInString(shortcuts) {
+		shortcuts = " Space select  z ZIP  p LLM"
+		if a.cfg.supportsAgentic() {
+			shortcuts = " p LLM  P Agentic  Space select  z ZIP"
+		}
+		shortcuts += "  r Review  i Import  q Quit"
+	}
+	// The shortcut bar spans the terminal so the sidebar cannot clip it.
 	header := []string{
 		" PIPKIN  " + trunc(a.cwd, max(0, leftWidth-10)),
-		"  ↑↓ move  ←→ expand  space select  z ZIP  p LLM  r REVIEW  i IMPORT  q quit",
+		shortcuts,
 		strings.Repeat("─", max(0, leftWidth)),
 	}
 	var lines []string
@@ -198,7 +218,14 @@ func (a *App) render() {
 	}
 	lines = append(lines, strings.Repeat("─", max(0, leftWidth)), fmt.Sprintf(" %d files selected  |  %s", len(selected), status))
 	if a.editing {
-		lines = append(lines, " Prompt (Enter send, Esc cancel):", " > "+a.prompt)
+		label := " Prompt (Enter send, Esc cancel):"
+		if a.agentic {
+			label = " Agentic prompt (Enter send, Esc cancel):"
+			if name, _, err := a.cfg.activeAgentProfile(); err == nil && name != "builtin" {
+				label += " " + name
+			}
+		}
+		lines = append(lines, label, " > "+a.prompt)
 	} else {
 		lines = append(lines, " ZIP: "+a.outputPath(""))
 	}
@@ -213,15 +240,15 @@ func (a *App) render() {
 		count = len(side)
 	}
 	// Clip output to terminal height; never print beyond the viewport.
-	if count > h {
-		count = h
+	if count > screenHeight {
+		count = screenHeight
 	}
 	for i := 0; i < count; i++ {
 		l := ""
 		if i < len(lines) {
 			l = lines[i]
 		}
-		if rightWidth == 0 {
+		if rightWidth == 0 || i == 1 {
 			out.WriteString(trunc(l, w))
 		} else {
 			r := ""
@@ -233,6 +260,13 @@ func (a *App) render() {
 		if i < count-1 {
 			out.WriteString("\r\n")
 		}
+	}
+	if a.traceStatus != "" {
+		out.WriteString("\r\n" + trunc(" "+a.traceStatus, w))
+	}
+	for _, link := range links {
+		label := trunc(" "+link.Label+": "+link.URL, w)
+		fmt.Fprintf(&out, "\r\n\x1b]8;;%s\x1b\\%s\x1b]8;;\x1b\\", link.URL, label)
 	}
 	os.Stdout.WriteString(out.String())
 }
@@ -249,19 +283,29 @@ func (a *App) submitWithSpinner(prompt string) error {
 	a.spinnerMessage = "Packaging request..."
 	events := make(chan workflowEvent, 32)
 	done := make(chan error, 1)
-	workflowEventHook = func(e workflowEvent) {
+	var completion, trace string
+	a.traceStatus = ""
+	ctx := withWorkflowEvents(context.Background(), func(e workflowEvent) {
+		switch e.Type {
+		case "complete":
+			completion = e.Message
+		case "trace":
+			trace = e.Message
+		}
 		select {
 		case events <- e:
 		default:
 		}
-	}
-	defer func() { workflowEventHook = nil; a.busy = false; a.spinnerMessage = "" }()
-	go func() { done <- a.submit(prompt) }()
+	})
+	defer func() { a.busy = false; a.spinnerMessage = "" }()
+	go func() { done <- a.submit(ctx, prompt) }()
 	ticker := time.NewTicker(120 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		select {
 		case err := <-done:
+			a.status = completion
+			a.traceStatus = trace
 			return err
 		case e := <-events:
 			if e.Type == "status" || e.Type == "job" || e.Type == "complete" {
