@@ -114,7 +114,9 @@ func reportLangfuse(cfg Config, job WorkflowJob, calls ...llmCall) error {
 	}
 	ip := net.ParseIP(u.Hostname())
 	loopback := strings.EqualFold(u.Hostname(), "localhost") || ip != nil && ip.IsLoopback()
-	if u.Scheme != "https" && !(u.Scheme == "http" && loopback) {
+	container := os.Getenv("PIPKIN_WEB_CONTAINER") == "1" &&
+		os.Getenv("PIPKIN_LANGFUSE_CONTAINER_HTTP") == "1" && u.Host == "langfuse-web:3000"
+	if u.Scheme != "https" && !(u.Scheme == "http" && (loopback || container)) {
 		return fmt.Errorf("Langfuse URL must use HTTPS (except loopback)")
 	}
 	traceIDBytes := make([]byte, 16)

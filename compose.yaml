@@ -1,0 +1,40 @@
+services:
+  pipkin:
+    image: ${PIPKIN_IMAGE:-ghcr.io/jakekalstad/pipkin:latest}
+    build:
+      context: .
+      args:
+        WITH_LANGGRAPH: ${PIPKIN_WITH_LANGGRAPH:-true}
+    init: true
+    user: "${PIPKIN_UID:-1000}:${PIPKIN_GID:-1000}"
+    ports:
+      - "127.0.0.1:${PIPKIN_PORT:-8787}:${PIPKIN_PORT:-8787}"
+    env_file:
+      - path: ${PIPKIN_DOCKER_ENV:-./.env}
+        required: false
+    environment:
+      LISTEN_URL: http://127.0.0.1:${PIPKIN_PORT:-8787}
+      PIPKIN_WEB_CONTAINER: "1"
+      PIPKIN_CONFIG: /config/config.json
+      PIPKIN_ENV_FILE: /dev/null
+    volumes:
+      - "${PIPKIN_WORKSPACE:-.}:/workspace"
+      - "${PIPKIN_CONFIG_DIR:-./deploy}:/config:ro"
+
+  vllm:
+    profiles: [vllm]
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+    gpus: all
+    shm_size: 2gb
+    command:
+      - --model
+      - ${VLLM_MODEL:-Qwen/Qwen3-0.6B}
+      - --max-model-len
+      - "${VLLM_MAX_MODEL_LEN:-8192}"
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - vllm-cache:/root/.cache/huggingface
+
+volumes:
+  vllm-cache:

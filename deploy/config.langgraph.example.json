@@ -1,0 +1,10 @@
+{
+  "agent_profile": "thorough",
+  "agent_profiles": {
+    "thorough": {
+      "runner": "langgraph",
+      "review_passes": 2,
+      "review_focus": "Check regressions, edge cases, and compatibility."
+    }
+  }
+}

@@ -1,0 +1,13 @@
+# Overlay on the pinned upstream Compose file. Requires Compose 2.30+.
+services:
+  pipkin:
+    environment:
+      LANGFUSE_BASE_URL: http://langfuse-web:3000
+      PIPKIN_LANGFUSE_DISPLAY_URL: http://127.0.0.1:3000
+      PIPKIN_LANGFUSE_CONTAINER_HTTP: "1"
+  langfuse-web:
+    ports: !override
+      - "127.0.0.1:3000:3000"
+  minio:
+    ports: !override
+      - "127.0.0.1:9090:9000"

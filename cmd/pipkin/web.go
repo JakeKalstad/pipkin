@@ -62,6 +62,9 @@ func configuredLinks(cfg Config) []serviceLink {
 		}
 	}
 	raw := langfuseURL(cfg)
+	if display := strings.TrimSpace(os.Getenv("PIPKIN_LANGFUSE_DISPLAY_URL")); display != "" && raw != "" {
+		raw = display
+	}
 	if u, err := url.Parse(raw); err == nil && u.Hostname() != "" && u.User == nil &&
 		(u.Scheme == "http" || u.Scheme == "https") && strings.IndexFunc(raw, unicode.IsControl) == -1 {
 		links = append(links, serviceLink{"Langfuse", u.String()})
@@ -502,7 +505,15 @@ func serveWeb(raw string) error {
 	if err != nil {
 		return err
 	}
-	server := &http.Server{Addr: addr, Handler: webHandler(), ReadHeaderTimeout: 5 * time.Second}
+	bind := addr
+	if os.Getenv("PIPKIN_WEB_CONTAINER") == "1" {
+		_, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return err
+		}
+		bind = net.JoinHostPort("0.0.0.0", port)
+	}
+	server := &http.Server{Addr: bind, Handler: webHandler(), ReadHeaderTimeout: 5 * time.Second}
 	fmt.Fprintln(os.Stderr, "Pipkin web UI: http://"+addr)
 	return server.ListenAndServe()
 }

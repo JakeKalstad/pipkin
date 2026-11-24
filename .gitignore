@@ -5,3 +5,4 @@
 *.vsix
 .pipkin/
 .configure/pipkin/config.json
+/deploy/langfuse.upstream.yaml
