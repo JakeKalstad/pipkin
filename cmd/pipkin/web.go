@@ -21,13 +21,13 @@ import (
 
 type webSession struct{ ID, Project, Status, Model, Created string }
 type webLine struct {
-	Number int
-	Text   string
+	Text string
+	Kind string
 }
 type webFile struct {
 	Path, Status, WorkspaceStatus, Decision string
 	Applied                                 bool
-	Before, After                           []webLine
+	Diff                                    []webLine
 }
 type webDir struct {
 	Name, Rel              string
@@ -133,23 +133,37 @@ func listWebSessions() []webSession {
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].Created > sessions[j].Created })
 	return sessions
 }
-func webLines(b []byte) []webLine {
-	if len(b) == 0 {
-		return nil
+func webDiff(f ReviewFile, mode string) []webLine {
+	before := f.Before
+	if mode == "current" {
+		before = f.Current
 	}
-	if len(b) > 256*1024 {
-		return []webLine{{Text: "[File too large for browser preview]"}}
+	for _, path := range []string{before, f.After} {
+		if info, err := os.Stat(path); err == nil && info.Size() > 256*1024 {
+			return []webLine{{Text: "File too large for browser preview."}}
+		}
 	}
-	if strings.ContainsRune(string(b), '\x00') {
-		return []webLine{{Text: "[Binary file]"}}
+	var output []webLine
+	inHunk := false
+	for _, line := range diffLines(f, mode) {
+		kind := ""
+		switch {
+		case !inHunk && (strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "+++ ") || strings.HasPrefix(line, "index ")):
+			// The file heading already identifies the path.
+			continue
+		case strings.HasPrefix(line, "+"):
+			kind = "added"
+		case strings.HasPrefix(line, "-"):
+			kind = "removed"
+		case strings.HasPrefix(line, "@@"):
+			inHunk = true
+			kind = "hunk"
+		}
+		output = append(output, webLine{Text: line, Kind: kind})
 	}
-	parts := strings.Split(string(b), "\n")
-	out := make([]webLine, 0, len(parts))
-	for i, s := range parts {
-		out = append(out, webLine{Number: i + 1, Text: s})
-	}
-	return out
+	return output
 }
+
 func buildWebDirTree(root, base string) ([]webDir, error) {
 	entries, err := os.ReadDir(base)
 	if err != nil {
@@ -381,18 +395,7 @@ func webHandlerForRoot(root string) http.Handler {
 			if decisions.Applied[f.Path] {
 				page.Applied++
 			}
-			left := f.Before
-			if mode == "current" {
-				left = f.Current
-			}
-			var before, after []byte
-			if left != "" {
-				before, _ = os.ReadFile(left)
-			}
-			if f.After != "" {
-				after, _ = os.ReadFile(f.After)
-			}
-			page.Files = append(page.Files, webFile{Path: f.Path, Status: f.Status, WorkspaceStatus: f.WorkspaceStatus, Decision: decision, Applied: decisions.Applied[f.Path], Before: webLines(before), After: webLines(after)})
+			page.Files = append(page.Files, webFile{Path: f.Path, Status: f.Status, WorkspaceStatus: f.WorkspaceStatus, Decision: decision, Applied: decisions.Applied[f.Path], Diff: webDiff(f, mode)})
 		}
 		render(w, page)
 	})

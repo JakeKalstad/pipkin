@@ -57,6 +57,7 @@ func emit(ctx context.Context, event workflowEvent) {
 }
 
 type WorkflowJob struct {
+	DraftChanged   *bool    `json:"draft_changed,omitempty"`
 	AgentProfile   string   `json:"agent_profile,omitempty"`
 	TextFallback   bool     `json:"text_fallback,omitempty"`
 	ContextOmitted []string `json:"context_omitted,omitempty"`
@@ -617,6 +618,11 @@ func workflowSendFiles(ctx context.Context, root string, files []*Node, prompt s
 		}
 		if job.Unchanged {
 			message = "Provider returned identical files — nothing to apply"
+			if job.DraftChanged != nil && *job.DraftChanged {
+				message = "Agentic review returned to the original files — nothing to apply"
+			} else if job.DraftChanged != nil {
+				message = "Agentic draft and final result contain no file changes"
+			}
 			if len(job.ContextOmitted) > 0 {
 				message = fmt.Sprintf("No edits; %d files omitted from model context (see job.json)", len(job.ContextOmitted))
 			}
@@ -633,6 +639,13 @@ func agenticDelivery(ctx context.Context, cfg Config, root, input, result, promp
 		return err
 	}
 	job.AgentProfile = name
+	inputFiles := job.Files
+	if inputFiles == nil {
+		inputFiles, err = zipChecksums(input)
+		if err != nil {
+			return err
+		}
+	}
 	draft := filepath.Join(filepath.Dir(result), "draft.zip")
 	hosted := cfg.hostedArchive(true)
 	runDraft := func() error {
@@ -647,6 +660,20 @@ func agenticDelivery(ctx context.Context, cfg Config, root, input, result, promp
 				emit(ctx, workflowEvent{Type: "status", Message: "Hosted draft returned no ZIP; switching to text edits"})
 			}
 		}
+		if hosted && err == nil {
+			checksums, checksumErr := zipChecksums(draft)
+			if checksumErr != nil {
+				return fmt.Errorf("agentic draft: %w", checksumErr)
+			}
+			if maps.Equal(inputFiles, checksums) {
+				if err := os.Rename(draft, filepath.Join(filepath.Dir(draft), "hosted-draft.zip")); err != nil {
+					return fmt.Errorf("save unchanged hosted draft: %w", err)
+				}
+				hosted = false
+				job.TextFallback = true
+				emit(ctx, workflowEvent{Type: "status", Message: "Hosted draft made no changes; retrying with text edits"})
+			}
+		}
 		if !hosted {
 			textPrompt := "Implement the requested changes in the supplied files. Review your edits for consistency. You cannot execute project code.\n\nUser request:\n" + prompt
 			err = sendOpenAI(ctx, cfg, root, input, draft, textPrompt, &job.ContextOmitted)
@@ -657,6 +684,12 @@ func agenticDelivery(ctx context.Context, cfg Config, root, input, result, promp
 		if err := validateZipStrict(draft); err != nil {
 			return fmt.Errorf("agentic draft: %w", err)
 		}
+		checksums, err := zipChecksums(draft)
+		if err != nil {
+			return fmt.Errorf("agentic draft: %w", err)
+		}
+		changed := !maps.Equal(inputFiles, checksums)
+		job.DraftChanged = &changed
 		return nil
 	}
 	candidate := draft

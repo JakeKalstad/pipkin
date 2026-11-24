@@ -300,8 +300,9 @@ class PipkinEndToEnd(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertIn(PROMPT, page)
-        self.assertIn("Old alpha", page)
-        self.assertIn("New alpha", page)
+        self.assertIn('class="diff-line removed">-Old alpha', page)
+        self.assertIn('class="diff-line added">&#43;New alpha', page)
+        self.assertIn('class="diff-line hunk">@@', page)
         job = parse_qs(urlsplit(review_url).query)["job"][0]
         review = {"csrf": token[1], "job": job}
         self.assertEqual(request("/copy", dict(review, confirm="COPY"))[0], 409)
@@ -311,6 +312,42 @@ class PipkinEndToEnd(unittest.TestCase):
         self.assert_workspace(ORIGINAL["alpha.txt"])
         self.assertEqual(request("/copy", dict(review, confirm="COPY"))[0], 303)
         self.assert_workspace(PROPOSED["alpha.txt"])
+
+    def test_snippet_uses_project_environment_and_archive_provider(self):
+        class SnippetProvider(BaseHTTPRequestHandler):
+            def do_POST(self):
+                request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if (self.path != "/v1/chat/completions"
+                        or self.headers.get("Authorization") != "Bearer snippet-key"
+                        or request["model"] != "snippet-model"
+                        or request["messages"][1]["content"] != "Explain this snippet"):
+                    self.send_error(400)
+                    return
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"choices":[{"message":{"content":"Snippet response"}}]}')
+
+            def log_message(self, format, *args):
+                pass
+
+        with ThreadingHTTPServer(("127.0.0.1", 0), SnippetProvider) as server:
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                self.env.pop("PIPKIN_ENV_FILE")
+                (self.project / ".env").write_text(
+                    f"PIPKIN_PROVIDER=openai-archive\n"
+                    f"PIPKIN_BASE_URL=http://127.0.0.1:{server.server_port}/v1\n"
+                    f"PIPKIN_MODEL=snippet-model\n"
+                    f"PIPKIN_API_KEY_ENV=SNIPPET_KEY\nSNIPPET_KEY=snippet-key\n"
+                )
+                process = self.start("--snippet", stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                out, err = process.communicate(b'{"system":"Explain code","user":"Explain this snippet"}', timeout=TIMEOUT)
+                self.assertEqual(process.returncode, 0, err)
+                self.assertEqual(out.strip(), b"Snippet response")
+            finally:
+                server.shutdown()
+                thread.join(TIMEOUT)
 
     def test_mcp_dummy_client_submit_and_review(self):
         log = tempfile.TemporaryFile()
