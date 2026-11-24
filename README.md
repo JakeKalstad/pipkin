@@ -22,7 +22,7 @@ Yes, this does involve reading a diff. We appreciate your patience with this leg
 ## Day-to-day workflow
 
 - **Web:** Filter file paths, select the files you want, and choose a provider profile for the delivery. Submitting opens the saved job and shows progress. In review, jump to a file, show pending files, or reuse a delivery’s prompt and selection in a new draft.
-- **Terminal:** Press `m` to switch between configured provider profiles for the current session. Press `r` to open delivery history, including failed attempts and their error details.
+- **Terminal:** Press `s` to select only the highlighted file or folder. Press Space to toggle an item in the current selection. Press `m` to switch between configured provider profiles for the current session. Press `r` to open delivery history, including failed attempts and their error details.
 - **VSCodium:** **Send Selected Files to LLM** lets you choose Standard or Agentic. Set `pipkin.providerProfile` to use a specific profile for editor requests. **Pipkin Deliveries** lists jobs for the active workspace in newest-first order. Open a job to revisit its prompt, diff, or error.
 
 ### Hidden files
@@ -378,15 +378,53 @@ The Go `html/template` interface offers a recursive file/directory picker, promp
 
 With `LISTEN_URL`, `langfuse_url`, or `LANGFUSE_BASE_URL` configured, Pipkin displays the corresponding service links in the web header and the terminal picker. Terminals that support OSC 8 make the displayed URLs clickable.
 
+### System instructions and Markdown sources
+
+Pipkin loads the root `AGENTS.md` by default for text and hosted archive deliveries. Use it for build commands, project conventions, and review rules. To opt out, select **Skip automatic AGENTS.md loading** under **Instructions**. Explicit Markdown paths remain available for project-specific layouts.
+
+Store reusable Agent Skills as `.agents/skills/<skill-name>/SKILL.md`. Pipkin lists these skills and sends their Markdown when you enable them. Use **Instructions** in the web UI to create or edit either format and to enable or disable skills. The browser editor supplies starter text, including `name` and `description` front matter for a new skill. The text is saved directly in the workspace and can be checked into Git.
+
+In the terminal, press `I` to open the instruction picker. Press Enter to edit, `n` to start a new skill, or Space to toggle a skill. Editing uses `VISUAL`, then `EDITOR`, then `vi`. Save and exit the editor to return to the instruction list. A new skill starts disabled and is highlighted immediately, even when you keep the starter template. Press Space to enable it.
+
+You can still add a workspace system prompt, extra Markdown paths, or per-delivery guidance. Instructions are loaded independently of ZIP selection. Pipkin reads skill Markdown as guidance. Skill scripts, references, and assets are not discovered or executed automatically. **Help** documents the interfaces, and **About** displays build and provider details.
+
+```sh
+pipkin --workflow --agentic --files-from files.json --prompt-file task.txt \
+  --instructions AGENTS.md --instructions .claude/skills/review/SKILL.md .
+```
+
+The workspace prompt comes first, followed by root `AGENTS.md`, saved Markdown paths, per-delivery Markdown paths, and per-delivery inline text. Pipkin keeps the first occurrence of each path. The combined guidance is limited to 32 KiB and up to 16 listed files. Pipkin refuses paths outside the workspace, symlinks, and protected paths. A missing or invalid instruction file stops the delivery before a model call.
+
+Pipkin sends the same instructions for the initial draft, subsequent reviews, and hosted-to-text fallback. The provider receives the guidance in the system instructions alongside Pipkin's format and tool constraints. Text providers deduct custom guidance from the available file-context budget. Custom system guidance is supported by text and hosted archive providers. The legacy multipart transport and editor snippets use their existing interfaces.
+
+Saved guidance is scoped to the workspace's resolved path and shared by Pipkin clients using the same `PIPKIN_OUTPUT_DIR`. Review records include source names and SHA-256 fingerprints. Reusing a delivery loads the current workspace guidance. Re-enter any one-off guidance you still need. If Langfuse request-content capture is enabled, captured provider inputs can include the guidance.
+
+### Free prompt
+
+Press `f` in the terminal or choose **Free prompt** in the web header. In the TUI history, Enter opens a conversation, `n` starts a new one, and `d` followed by uppercase `Y` deletes it. Inside the composer, Enter adds a line, Ctrl+S sends, Ctrl+T opens the scrollable transcript, and Esc returns to history. In the browser, use the **Conversations** sidebar to open, start, or delete a conversation.
+
+Successful exchanges are saved locally per workspace and sorted by recent activity. The next model call includes the latest complete turns that fit the context budget. The saved transcript keeps earlier turns. Free prompts use workspace guidance and create no ZIP delivery.
+
+For HTTP, use `GET /prompt` for history or `GET /prompt?conversation=ID` for a transcript. POST an optional `conversation` field to continue a thread or omit it to start one. Use `action=delete` and the conversation ID to delete. POST uses URL-encoded fields and the form's CSRF token. HTML submissions redirect to the conversation, while `Accept: application/json` returns `{"reply":"...","conversation":"ID"}`. JSON GET requests return the history or transcript.
+
+For MCP, call `pipkin_prompt` with an absolute `root`, a `prompt`, and the optional `conversation` ID. Use `pipkin_conversations` with `root` and `action` (`list`, `read`, or `delete`). Read and delete also require `conversation`. HTTP and MCP prompt submissions accept optional `provider_profile`, `system_prompt`, and `instruction_files` (repeated form fields over HTTP, an array over MCP).
+
 ## Web HTTP API
 
-Start with `pipkin --web` and the loopback `LISTEN_URL` shown above. These endpoints serve HTML and accept URL-encoded form data. For every POST, include the `csrf` token from the hidden field on the landing or review page. Successful POSTs return `303 See Other`.
+Start with `pipkin --web` and the loopback `LISTEN_URL` shown above. These endpoints serve HTML and accept URL-encoded form data. For every POST, include the `csrf` token from the hidden field on the page for that action. Delivery and instruction mutations redirect on success. Free prompts return replies directly when the client requests JSON.
 
 | Method and path | Parameters | Behaviour |
 | --- | --- | --- |
 | `GET /` | Optional `hidden=1` | Show the workspace file picker and saved deliveries. |
 | `GET /git` | Optional `path`, `local=1`, `diff=upstream\|working\|commit`, `commit` (full object ID) | Show scoped Git history or a read-only patch. |
-| `POST /submit` | `prompt`, repeated `files` fields, optional `agentic=1` and `show_hidden=1` | Start a delivery in the background. Refresh the landing page for its status. |
+| `GET /help` and `GET /about` | — | Show setup, usage, API and MCP references or application metadata. |
+| `GET /prompt` | Optional `conversation` | Open conversation history or a saved transcript. |
+| `POST /prompt` | `prompt`, optional `provider_profile`, `system_prompt`, repeated `instruction_files` | Return a text response in HTML or JSON. Validation or provider errors return 422. |
+| `GET /instructions` | — | Open the workspace instruction editor. |
+| `POST /instructions` | `system_prompt`, newline-separated `instruction_files`, optional `skip_project_instructions=1` | Save workspace guidance. Invalid guidance returns 422. |
+| `GET /instructions/edit` | `path` or new `skill` name | Open or scaffold a standard Markdown file. |
+| `POST /instructions/edit` | `path` and `markdown`, or `path` and `action=toggle` | Save Markdown or toggle an existing skill. |
+| `POST /submit` | `prompt`, repeated `files`, optional `provider_profile`, `agentic=1`, `show_hidden=1`, `system_prompt`, repeated `instruction_files` | Start a delivery in the background. Refresh the landing page for its status. |
 | `GET /review` | `job`, optional `mode=submitted\|current` | Show delivery status or compare the result with the submitted ZIP or current workspace. The default is `submitted`. |
 | `POST /decision` | `job`, `action`, `path` for a single file, optional `mode` | Save a decision. Actions are `approve`, `reject`, `reset`, `approve-all`, and `reject-all`. |
 | `POST /copy` | `job`, `confirm=COPY` | Copy approved files into the working tree. Returns `409` if a decision is pending or a workspace conflict blocks copying. |
@@ -405,13 +443,31 @@ Configure your MCP client to launch the local stdio server. Use the full path to
 
 | Tool | Required arguments | Result |
 | --- | --- | --- |
+| `pipkin_prompt` | `root`, `prompt` | Returns `reply` without attachments or a delivery. |
+| `pipkin_conversations` | `root`, `action` | List, read, or delete saved conversations. |
+| `pipkin_instructions` | `root`, `action` | Lists or manages `AGENTS.md` and discovered skills. |
 | `pipkin_pack` | `root`, `paths` | Creates a ZIP and returns its path and file count. |
-| `pipkin_submit` | `root`, `paths`, `prompt` | Sends the selection to the configured provider and returns the saved job directory and result ZIP. |
+| `pipkin_submit` | `root`, `paths`, `prompt` | Sends the selection and returns `job` and `result`. Accepts optional `agentic` (boolean), `system_prompt` (string), and `instruction_files` (array of strings). |
 | `pipkin_jobs` | `root` | Lists saved job directories for the project. |
 | `pipkin_review` | `job` | Returns the saved job’s file changes for inspection. |
 | `pipkin_apply` | `job`, `file` | Applies one reviewed file. Requires `PIPKIN_MCP_ALLOW_APPLY=1` in the server’s environment. |
 
 Use absolute paths for `root` and `job`. Use project-relative paths for the `paths` array and the `file` argument. A typical session runs `pipkin_submit` → `pipkin_review`, then applies selected changes through a review interface or the opt-in MCP apply tool.
+
+For `pipkin_instructions`, use `list`, `read`, `save`, or `toggle` as the action. The last three require `file`, a standard workspace-relative Markdown path. `save` also requires `markdown`. Confirm writes with the user before saving or toggling through an MCP client.
+
+Example arguments to `pipkin_submit` with custom guidance:
+
+```json
+{
+  "root": "/absolute/path/to/project",
+  "paths": ["cmd/pipkin"],
+  "prompt": "Implement the requested behaviour and check callers.",
+  "agentic": true,
+  "system_prompt": "Preserve compatibility with saved deliveries.",
+  "instruction_files": ["AGENTS.md", ".claude/skills/review/SKILL.md"]
+}
+```
 
 ## Troubleshooting deliveries
 

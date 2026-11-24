@@ -27,12 +27,18 @@ type mcpCall struct {
 	Arguments json.RawMessage `json:"arguments"`
 }
 type mcpArgs struct {
-	Root    string   `json:"root"`
-	Paths   []string `json:"paths"`
-	Agentic bool     `json:"agentic"`
-	Prompt  string   `json:"prompt"`
-	Job     string   `json:"job"`
-	File    string   `json:"file"`
+	Conversation     string   `json:"conversation"`
+	Action           string   `json:"action"`
+	Markdown         *string  `json:"markdown"`
+	ProviderProfile  string   `json:"provider_profile"`
+	SystemPrompt     string   `json:"system_prompt"`
+	InstructionFiles []string `json:"instruction_files"`
+	Root             string   `json:"root"`
+	Paths            []string `json:"paths"`
+	Agentic          bool     `json:"agentic"`
+	Prompt           string   `json:"prompt"`
+	Job              string   `json:"job"`
+	File             string   `json:"file"`
 }
 
 func mcpTool(name, description string, properties map[string]any, required ...string) map[string]any {
@@ -42,9 +48,23 @@ func mcpTools() []map[string]any {
 	root := map[string]any{"type": "string", "description": "Absolute path of local project root"}
 	paths := map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Explicit project-relative file or directory paths"}
 	job := map[string]any{"type": "string", "description": "Absolute path to a Pipkin saved job directory"}
+	text := map[string]any{"type": "string"}
+	instructionFiles := map[string]any{"type": "array", "items": text}
 	return []map[string]any{
+		mcpTool("pipkin_prompt", "Send a text-only prompt using workspace instructions. Returns the response without creating a delivery or attaching project files", map[string]any{
+			"root": root, "prompt": text, "system_prompt": text, "instruction_files": instructionFiles, "provider_profile": text, "conversation": text,
+		}, "root", "prompt"),
+		mcpTool("pipkin_conversations", "List, read, or delete saved free-prompt conversations. Confirm deletion with the user", map[string]any{
+			"root":         root,
+			"action":       map[string]any{"type": "string", "enum": []string{"list", "read", "delete"}},
+			"conversation": text,
+		}, "root", "action"),
+		mcpTool("pipkin_instructions", "List or read project instructions and skills, or save Markdown and toggle a skill after explicit approval", map[string]any{
+			"root": root, "action": map[string]any{"type": "string", "enum": []string{"list", "read", "save", "toggle"}},
+			"file": map[string]any{"type": "string", "description": "AGENTS.md or .agents/skills/<name>/SKILL.md, required except for list"}, "markdown": text,
+		}, "root", "action"),
 		mcpTool("pipkin_pack", "Create a ZIP from explicitly selected files and directories, without changing the repository", map[string]any{"root": root, "paths": paths}, "root", "paths"),
-		mcpTool("pipkin_submit", "Submit selected files as a ZIP with an instruction prompt. This invokes the configured external LLM and incurs API usage. Saves input, result and metadata separately, without applying changes", map[string]any{"root": root, "paths": paths, "prompt": map[string]any{"type": "string"}, "agentic": map[string]any{"type": "boolean", "description": "Run implementation and independent review with OpenAI or vLLM"}}, "root", "paths", "prompt"),
+		mcpTool("pipkin_submit", "Submit selected files as a ZIP with an instruction prompt. This invokes the configured external LLM and incurs API usage. Saves input, result and metadata separately, without applying changes", map[string]any{"root": root, "paths": paths, "prompt": map[string]any{"type": "string"}, "agentic": map[string]any{"type": "boolean", "description": "Run a draft and review with a supported text or archive provider"}, "system_prompt": map[string]any{"type": "string", "description": "Explicit guidance appended to the system instructions for this delivery"}, "instruction_files": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Ordered project-relative Markdown paths, including hidden skill paths"}}, "root", "paths", "prompt"),
 		mcpTool("pipkin_jobs", "List saved Pipkin sessions for a project", map[string]any{"root": root}, "root"),
 		mcpTool("pipkin_review", "Review changed files in a completed Pipkin session, without applying them", map[string]any{"job": job}, "job"),
 		mcpTool("pipkin_apply", "Apply ONE reviewed file to the working tree after explicit approval. Disabled by default; enable using PIPKIN_MCP_ALLOW_APPLY=1", map[string]any{"job": job, "file": map[string]any{"type": "string", "description": "Project-relative file to apply"}}, "job", "file"),
@@ -102,6 +122,34 @@ func mcpCallTool(call mcpCall) (any, error) {
 		return nil, err
 	}
 	switch call.Name {
+	case "pipkin_prompt", "pipkin_instructions", "pipkin_conversations":
+		root, err := mcpProject(a.Root)
+		if err != nil {
+			return nil, err
+		}
+		if call.Name == "pipkin_instructions" {
+			return mcpInstructions(root, a)
+		}
+		if call.Name == "pipkin_conversations" {
+			dir, err := conversationDirectory(root)
+			if err != nil {
+				return nil, err
+			}
+			switch a.Action {
+			case "list":
+				return listConversations(dir)
+			case "read":
+				return readConversation(dir, a.Conversation)
+			case "delete":
+				return map[string]string{"deleted": a.Conversation}, deleteConversation(dir, a.Conversation)
+			default:
+				return nil, fmt.Errorf("unknown conversation action %q", a.Action)
+			}
+		}
+		cfg := loadProviderConfig(a.ProviderProfile)
+		cfg.instructionRequest = instructionSettings{SystemPrompt: a.SystemPrompt, Files: a.InstructionFiles}
+		thread, reply, err := sendConversation(context.Background(), root, a.Conversation, a.Prompt, cfg)
+		return map[string]string{"reply": reply, "conversation": thread.ID}, err
 	case "pipkin_pack", "pipkin_submit":
 		root, err := mcpProject(a.Root)
 		if err != nil {
@@ -133,21 +181,8 @@ func mcpCallTool(call mcpCall) (any, error) {
 		if strings.TrimSpace(a.Prompt) == "" {
 			return nil, errors.New("prompt is required")
 		}
-		// Reuse the standard workflow and preserve its per-job artifacts.
-		tmp, err := os.MkdirTemp("", "pipkin-mcp-")
-		if err != nil {
-			return nil, err
-		}
-		defer os.RemoveAll(tmp)
-		mb, _ := json.Marshal(a.Paths)
-		mf := filepath.Join(tmp, "files.json")
-		pf := filepath.Join(tmp, "prompt.txt")
-		if err = os.WriteFile(mf, mb, 0600); err != nil {
-			return nil, err
-		}
-		if err = os.WriteFile(pf, []byte(a.Prompt), 0600); err != nil {
-			return nil, err
-		}
+		cfg := loadConfig()
+		cfg.instructionRequest = instructionSettings{SystemPrompt: a.SystemPrompt, Files: a.InstructionFiles}
 		var jobPath string
 		ctx := withWorkflowEvents(context.Background(), func(event workflowEvent) {
 			writeWorkflowEvent(os.Stderr, event)
@@ -155,7 +190,7 @@ func mcpCallTool(call mcpCall) (any, error) {
 				jobPath = event.Job
 			}
 		})
-		if err := workflowSend(ctx, root, mf, pf, a.Agentic); err != nil {
+		if err := workflowSendConfigured(ctx, root, files, a.Prompt, a.Agentic, cfg); err != nil {
 			return nil, err
 		}
 		if jobPath == "" {
@@ -235,7 +270,7 @@ func serveMCP(r io.Reader, w io.Writer) error {
 		var callErr error
 		switch req.Method {
 		case "initialize":
-			result = map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{"tools": map[string]any{"listChanged": false}}, "serverInfo": map[string]any{"name": "pipkin", "version": "0.3.0"}}
+			result = map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{"tools": map[string]any{"listChanged": false}}, "serverInfo": map[string]any{"name": "pipkin", "version": buildMetadata().Version}}
 		case "ping":
 			result = map[string]any{}
 		case "tools/list":
@@ -262,4 +297,27 @@ func serveMCP(r io.Reader, w io.Writer) error {
 		}
 	}
 	return sc.Err()
+}
+
+func mcpInstructions(root string, args mcpArgs) (any, error) {
+	switch args.Action {
+	case "list":
+		settings, err := loadInstructionSettings(root)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"project": projectInstructionsFile, "skills": workspaceSkills(root), "enabled_files": settings.Files, "skip_project_instructions": settings.SkipProjectInstructions}, nil
+	case "read":
+		text, err := standardInstructionDraft(root, args.File)
+		return map[string]string{"file": args.File, "markdown": text}, err
+	case "save":
+		if args.Markdown == nil {
+			return nil, errors.New("markdown is required when saving")
+		}
+		return map[string]string{"file": args.File}, saveStandardInstruction(root, args.File, *args.Markdown)
+	case "toggle":
+		return map[string]string{"file": args.File}, toggleStandardSkill(root, args.File)
+	default:
+		return nil, fmt.Errorf("unknown instruction action %q", args.Action)
+	}
 }

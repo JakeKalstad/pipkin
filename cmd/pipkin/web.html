@@ -14,9 +14,65 @@ input[type=search]{flex:1 1 160px}label{overflow-wrap:anywhere}button:focus-visi
 .review-tools{position:sticky;top:0;z-index:2;background:#142226;padding:8px 12px;border:1px solid var(--line);border-radius:10px}
 .file{scroll-margin-top:145px}.file:target{border-top-color:var(--accent)}.decision-current{box-shadow:inset 0 0 0 2px var(--accent)}.unified-diff{max-height:42rem}
 @media(max-width:820px){.columns{grid-template-columns:1fr}.intro h1{font-size:27px}.review-tools{position:static}.file{scroll-margin-top:8px}}
-</style></head><body><header><a href="/">🦦 PIPKIN</a><span class="sub">{{.Provider}} · {{.Model}}</span>{{if .Links}}<nav aria-label="Configured services">{{range .Links}} <a class="service-link" href="{{.URL}}" title="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Label}}</a>{{end}}</nav>{{end}}</header><main class="wrap">
+</style></head><body><header><a href="/">🦦 PIPKIN</a><span class="sub">{{.Provider}} · {{.Model}}</span><nav aria-label="Pipkin"><a class="service-link" href="/prompt">Free prompt</a><a class="service-link" href="/instructions">Instructions</a><a class="service-link" href="/help">Help</a><a class="service-link" href="/about">About</a></nav>{{if .Links}}<nav aria-label="Configured services">{{range .Links}} <a class="service-link" href="{{.URL}}" title="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Label}}</a>{{end}}</nav>{{end}}</header><main class="wrap">
 {{if .Notice}}<p class="notice">{{.Notice}}</p>{{end}}{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-{{if .Git}}
+{{if .Help}}{{template "help" .}}
+{{else if .FreePrompt}}
+<div class="columns"><section class="card"><h1>{{if .Conversation.ID}}{{.Conversation.Title}}{{else}}Free prompt{{end}}</h1>
+{{if .Conversation.ID}}
+{{range .Conversation.Messages}}<article><h3>{{if eq .Role "user"}}You{{else}}Pipkin{{end}}</h3><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{.Content}}</pre></article>{{end}}
+{{end}}
+<form method="post" action="/prompt">
+<input type="hidden" name="csrf" value="{{.Token}}">
+<input type="hidden" name="conversation" value="{{.Conversation.ID}}">
+<label for="free-prompt">Prompt</label><textarea name="prompt" id="free-prompt" required autofocus rows="8">{{.Prompt}}</textarea>
+<details{{if .PromptSystem}} open{{end}}><summary>Additional system guidance</summary><label for="free-system">System prompt</label><textarea name="system_prompt" id="free-system" rows="4">{{.PromptSystem}}</textarea></details>
+{{if .Providers}}<div class="toolbar"><label for="free-provider">Provider profile</label><select id="free-provider" name="provider_profile"><option value="">Default · {{.Model}}</option>{{range .Providers}}<option value="{{.Name}}" {{if eq .Name $.DraftProvider}}selected{{end}}>{{.Label}}</option>{{end}}</select></div>{{end}}
+<div class="toolbar"><button type="submit">Send prompt</button></div>
+</form></section>
+<aside class="card"><h2>Conversations</h2><p><a href="/prompt">New conversation</a></p>
+{{range .Conversations}}<a class="card job" href="/prompt?conversation={{.ID}}" {{if eq $.Conversation.ID .ID}}aria-current="page"{{end}}>{{.Title}}</a>{{else}}<p class="meta">No conversations yet.</p>{{end}}
+{{if .Conversation.ID}}<details><summary>Delete conversation</summary><form method="post" action="/prompt">
+<input type="hidden" name="csrf" value="{{.Token}}"><input type="hidden" name="conversation" value="{{.Conversation.ID}}">
+<button name="action" value="delete" class="danger" type="submit">Confirm delete</button>
+</form></details>{{end}}</aside></div>
+{{else if .About}}
+<section class="card"><h1>About Pipkin</h1><dl>
+<dt>Version</dt><dd>{{.About.Version}}</dd>
+{{if .About.Commit}}<dt>Commit</dt><dd><code>{{.About.Commit}}</code></dd>{{end}}
+<dt>Platform</dt><dd>{{.About.Platform}}</dd>
+<dt>Workspace</dt><dd><code>{{.Root}}</code></dd>
+<dt>Default provider</dt><dd>{{.Provider}}{{if .ActiveProvider}} ({{.ActiveProvider}}){{end}}</dd>
+<dt>Model</dt><dd>{{.Model}}</dd>
+{{if .AgentProfile}}<dt>Agent profile</dt><dd>{{.AgentProfile}}</dd>{{end}}
+</dl></section>
+{{else if .InstructionPath}}
+<section class="card"><h1>Edit <code>{{.InstructionPath}}</code></h1>
+<form method="post" action="/instructions/edit">
+<input type="hidden" name="csrf" value="{{.Token}}">
+<input type="hidden" name="path" value="{{.InstructionPath}}">
+<label for="instruction-markdown">Markdown</label>
+<textarea id="instruction-markdown" name="markdown" rows="20">{{.InstructionDraft}}</textarea>
+<div class="toolbar"><button type="submit">Save Markdown</button><a href="/instructions">Cancel</a></div>
+</form></section>
+{{else if .Instructions}}
+<section class="card"><h1>System instructions</h1><p class="sub">Workspace <code>{{.Root}}</code></p>
+<h2>Project and skill files</h2>
+<p><a href="/instructions/edit?path=AGENTS.md">Edit AGENTS.md</a></p>
+<p class="meta">Pipkin loads the root AGENTS.md by default. Enable a skill to use it in future deliveries.</p>
+{{range .SkillPaths}}<div class="toolbar"><a href="/instructions/edit?path={{.}}"><code>{{.}}</code></a>
+<form method="post" action="/instructions/edit"><input type="hidden" name="csrf" value="{{$.Token}}"><input type="hidden" name="path" value="{{.}}">
+<button type="submit" class="secondary" name="action" value="toggle">{{if skillActive $.Instructions.Files .}}Disable{{else}}Enable{{end}}</button></form></div>{{end}}
+<form method="get" action="/instructions/edit" class="toolbar"><label for="new-skill">New skill name</label><input id="new-skill" name="skill" required pattern="[a-z0-9]+(-[a-z0-9]+)*" maxlength="64" placeholder="review-migrations"><button type="submit">Create skill</button></form>
+<p>Pipkin loads these instructions for each delivery. Agentic draft and review passes receive the same instructions.</p>
+<form method="post" action="/instructions">
+<input type="hidden" name="csrf" value="{{.Token}}">
+<p><label><input type="checkbox" name="skip_project_instructions" value="1" {{if .Instructions.SkipProjectInstructions}}checked{{end}}> Skip automatic AGENTS.md loading</label></p><h2><label for="system-prompt">Workspace system prompt</label></h2><textarea id="system-prompt" name="system_prompt" placeholder="Architecture, coding conventions, and review criteria">{{.Instructions.SystemPrompt}}</textarea>
+<h2><label for="instruction-files">Markdown instruction files</label></h2><textarea id="instruction-files" name="instruction_files" placeholder="docs/engineering.md&#10;.agents/skills/review/SKILL.md">{{.InstructionFiles}}</textarea>
+<p class="meta">Enter one workspace-relative Markdown path per line. Listed files are read in order and sent to the selected model. Clear these fields to remove additional guidance.</p>
+<button type="submit">Save instructions</button>
+</form></section>
+{{else if .Git}}
 <div class="intro"><h1>Git history</h1><p class="sub"><code>{{.Git.Label}}</code>{{if .Git.Upstream}} · Upstream <code>{{.Git.Upstream}}</code>{{end}}</p></div>
 <nav class="toolbar" aria-label="Git views">
 <a href="/">File picker</a><a href="/git">Repository</a>
@@ -34,7 +90,7 @@ input[type=search]{flex:1 1 160px}label{overflow-wrap:anywhere}button:focus-visi
 <div class="intro"><h1>Prepare a delivery</h1><p class="sub">Workspace <code>{{.Root}}</code></p><nav class="toolbar"><a href="/git">Repository Git history</a><a href="{{if .ShowHidden}}/{{else}}/?hidden=1{{end}}">{{if .ShowHidden}}Hide hidden files{{else}}Show hidden files{{end}}</a></nav></div>
 <div class="columns"><section><div class="card"><form id="submit-delivery" action="/submit" method="post"><input type="hidden" name="csrf" value="{{.Token}}">{{if .ShowHidden}}<input type="hidden" name="show_hidden" value="1">{{end}}<h2>Choose files and folders</h2>
 <div class="toolbar"><input type="search" id="file-search" aria-label="Filter files by path" placeholder="Filter files by path"><button type="button" class="secondary" id="all">Select matching files</button><button type="button" class="secondary" id="none">Clear selection</button></div><div class="tree" id="tree">{{range .Dirs}}{{template "tree" .}}{{end}}</div><p id="selected" class="meta" aria-live="polite"></p><p id="empty-files" class="meta" hidden>No matching files.</p>
-<h2><label for="prompt">What should Pipkin change?</label></h2><textarea id="prompt" name="prompt" required placeholder="Fix the retry logic, add tests, and preserve existing behaviour...">{{.Prompt}}</textarea>{{if .Providers}}<div class="toolbar"><label for="provider-profile">Provider profile</label><select id="provider-profile" name="provider_profile"><option value="" data-agentic="{{.AgenticAvailable}}">Default{{if .ActiveProvider}} ({{.ActiveProvider}}){{end}} · {{.Model}}</option>{{range .Providers}}<option value="{{.Name}}" data-agentic="{{.Agentic}}" {{if eq .Name $.DraftProvider}}selected{{end}}>{{.Label}}</option>{{end}}</select></div>{{end}}
+<details><summary>System prompt for this delivery</summary><label for="delivery-system-prompt">Additional system guidance</label><textarea id="delivery-system-prompt" name="system_prompt" rows="4"></textarea></details><h2><label for="prompt">What should Pipkin change?</label></h2><textarea id="prompt" name="prompt" required placeholder="Fix the retry logic, add tests, and preserve existing behaviour...">{{.Prompt}}</textarea>{{if .Providers}}<div class="toolbar"><label for="provider-profile">Provider profile</label><select id="provider-profile" name="provider_profile"><option value="" data-agentic="{{.AgenticAvailable}}">Default{{if .ActiveProvider}} ({{.ActiveProvider}}){{end}} · {{.Model}}</option>{{range .Providers}}<option value="{{.Name}}" data-agentic="{{.Agentic}}" {{if eq .Name $.DraftProvider}}selected{{end}}>{{.Label}}</option>{{end}}</select></div>{{end}}
 {{if or .AgenticAvailable .Providers}}<p><label><input type="checkbox" id="agentic-mode" name="agentic" value="1" {{if .AgenticSelected}}checked{{end}}> Agentic mode{{if .AgentProfile}} ({{.AgentProfile}}){{end}}</label></p>{{end}}<p><button type="submit" id="send-delivery">Send delivery</button></p></form></div></section><section><h2>Recent deliveries</h2>{{if .Sessions}}<div class="toolbar"><label for="session-filter">Status</label><select id="session-filter"><option value="">All statuses</option><option value="running">Running</option><option value="completed">Completed</option><option value="failed">Failed</option></select></div><p id="empty-sessions" class="meta" hidden>No deliveries match this status.</p>{{end}}{{range .Sessions}}<a class="card job" data-status="{{.Status}}" href="/review?job={{.Project}}/{{.ID}}"><strong>{{.ID}}</strong> <span class="status" data-status="{{.Status}}">{{.Status}}</span><p class="meta">{{.Model}} · {{.Created}}</p></a>{{else}}<div class="card"><p class="sub">No deliveries yet.</p></div>{{end}}</section></div>
 <script>
 (() => {
@@ -110,6 +166,7 @@ input[type=search]{flex:1 1 160px}label{overflow-wrap:anywhere}button:focus-visi
 {{else}}<nav class="toolbar"><a href="/">← All deliveries</a>{{if ne .JobInfo.Status "running"}}<a href="/?from={{.Job}}">Reuse prompt and files</a>{{end}}</nav><h1>Review {{.JobInfo.ID}} <span class="status">{{.JobInfo.Status}}</span></h1><p class="meta">{{.JobInfo.Provider}} · {{.JobInfo.Model}} · {{.Root}} · {{.JobInfo.InputTokens}} input tokens{{if .JobInfo.CachedTokens}} ({{.JobInfo.CachedTokens}} cached){{end}} · {{.JobInfo.OutputTokens}} output tokens</p>
 {{if eq .JobInfo.Status "running"}}<div class="notice" role="status"><strong>{{.Stage}}</strong>{{if .Progress.InputTokens}}<p>{{.Progress.InputTokens}} input · {{.Progress.OutputTokens}} output · {{.Progress.CachedTokens}} cached tokens</p>{{end}}<p>This page refreshes while Pipkin works.</p></div><script>setTimeout(()=>location.reload(),3000)</script>{{end}}
 {{if .JobInfo.LangfuseStatus}}<p class="meta">{{.JobInfo.LangfuseStatus}}</p>{{end}}
+{{if .JobInfo.Instructions}}<details class="meta"><summary>System instruction sources</summary><ul>{{range .JobInfo.Instructions}}<li>{{.Name}} <code title="SHA-256">{{printf "%.12s" .SHA256}}</code></li>{{end}}</ul></details>{{end}}
 {{if .JobInfo.ContextOmitted}}<details class="meta"><summary>{{len .JobInfo.ContextOmitted}} selected files omitted from model context</summary><ul>{{range .JobInfo.ContextOmitted}}<li>{{.}}</li>{{end}}</ul></details>{{end}}
 {{if .JobInfo.Unchanged}}<p class="notice">{{if .JobInfo.DraftChanged}}Agentic review returned to the original files.{{else}}The provider returned identical files.{{end}} There are no changes to apply.</p>{{end}}
 {{if .JobInfo.TextFallback}}<p class="meta">Pipkin used text edits after a hosted pass returned no archive or an unchanged draft.</p>{{end}}

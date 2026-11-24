@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -49,6 +50,18 @@ type webGitHistory struct {
 }
 
 type webPage struct {
+	Conversations []conversationSummary
+	Conversation  conversation
+
+	FreePrompt                                   bool
+	PromptSystem                                 string
+	SkillPaths                                   []string
+	InstructionPath, InstructionDraft            string
+	HTTPStatus                                   int
+	Help                                         bool
+	About                                        *buildInfo
+	Instructions                                 *instructionSettings
+	InstructionFiles                             string
 	Git                                          *webGitHistory
 	ShowHidden                                   bool
 	Title, Mode, Job, Error, Notice, Root, Token string
@@ -69,7 +82,7 @@ type webPage struct {
 	Progress                                     workflowEvent
 }
 
-var reviewHTML = template.Must(template.ParseFS(webTemplateFiles, "web.html"))
+var reviewHTML = template.Must(template.New("web.html").Funcs(template.FuncMap{"skillActive": slices.Contains[[]string, string]}).ParseFS(webTemplateFiles, "web.html", "help.html"))
 
 type serviceLink struct {
 	Label string
@@ -280,6 +293,9 @@ func webHandlerForRoot(root string) http.Handler {
 		}
 		sort.Slice(page.Providers, func(i, j int) bool { return page.Providers[i].Name < page.Providers[j].Name })
 		page.AgentProfile, _, _ = cfg.activeAgentProfile()
+		if page.HTTPStatus != 0 {
+			w.WriteHeader(page.HTTPStatus)
+		}
 		if err := reviewHTML.ExecuteTemplate(w, "web.html", page); err != nil {
 			fmt.Fprintln(os.Stderr, "web template:", err)
 		}
@@ -317,6 +333,168 @@ func webHandlerForRoot(root string) http.Handler {
 		}
 		return true
 	}
+	mux.HandleFunc("GET /help", func(w http.ResponseWriter, r *http.Request) {
+		render(w, webPage{Title: "Help", Root: root, Help: true})
+	})
+	mux.HandleFunc("GET /about", func(w http.ResponseWriter, r *http.Request) {
+		build := buildMetadata()
+		render(w, webPage{Title: "About", Root: root, About: &build})
+	})
+	mux.HandleFunc("/prompt", func(w http.ResponseWriter, r *http.Request) {
+		page := webPage{Title: "Free prompt", Root: root, FreePrompt: true}
+		jsonResponse := strings.Contains(r.Header.Get("Accept"), "application/json")
+		write := func(status int, payload any) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(payload)
+		}
+		fail := func(status int, err error) {
+			if jsonResponse {
+				write(status, map[string]string{"error": err.Error()})
+				return
+			}
+			page.HTTPStatus, page.Error = status, err.Error()
+			render(w, page)
+		}
+		dir, err := conversationDirectory(root)
+		if err != nil {
+			fail(http.StatusInternalServerError, err)
+			return
+		}
+		if r.Method == http.MethodGet {
+			id := r.URL.Query().Get("conversation")
+			if id != "" {
+				page.Conversation, err = readConversation(dir, id)
+				if err != nil {
+					fail(http.StatusNotFound, err)
+					return
+				}
+				page.DraftProvider = page.Conversation.ProviderProfile
+				if jsonResponse {
+					write(http.StatusOK, page.Conversation)
+					return
+				}
+			}
+			page.Conversations, err = listConversations(dir)
+			if err != nil {
+				fail(http.StatusInternalServerError, err)
+				return
+			}
+			if jsonResponse {
+				write(http.StatusOK, page.Conversations)
+				return
+			}
+			render(w, page)
+			return
+		}
+		if !protected(w, r) {
+			return
+		}
+		id := r.PostForm.Get("conversation")
+		switch r.PostForm.Get("action") {
+		case "delete":
+			if err := deleteConversation(dir, id); err != nil {
+				fail(http.StatusUnprocessableEntity, err)
+				return
+			}
+			if jsonResponse {
+				write(http.StatusOK, map[string]string{"deleted": id})
+				return
+			}
+			http.Redirect(w, r, "/prompt", http.StatusSeeOther)
+			return
+		case "", "send":
+		default:
+			fail(http.StatusBadRequest, errors.New("unknown conversation action"))
+			return
+		}
+		page.Prompt = r.PostForm.Get("prompt")
+		page.DraftProvider = r.PostForm.Get("provider_profile")
+		page.PromptSystem = r.PostForm.Get("system_prompt")
+		cfg := loadProviderConfig(page.DraftProvider)
+		cfg.instructionRequest = instructionSettings{SystemPrompt: page.PromptSystem, Files: r.PostForm["instruction_files"]}
+		thread, reply, err := sendConversation(r.Context(), root, id, page.Prompt, cfg)
+		if err != nil {
+			page.Conversations, _ = listConversations(dir)
+			if id != "" {
+				page.Conversation, _ = readConversation(dir, id)
+			}
+			fail(http.StatusUnprocessableEntity, err)
+			return
+		}
+		if jsonResponse {
+			write(http.StatusOK, map[string]string{"reply": reply, "conversation": thread.ID})
+			return
+		}
+		http.Redirect(w, r, "/prompt?conversation="+url.QueryEscape(thread.ID), http.StatusSeeOther)
+	})
+	mux.HandleFunc("/instructions", func(w http.ResponseWriter, r *http.Request) {
+		page := webPage{Title: "System instructions", Root: root, SkillPaths: workspaceSkills(root)}
+		if r.Method == http.MethodGet {
+			settings, err := loadInstructionSettings(root)
+			if err != nil {
+				page.Error = err.Error()
+			}
+			page.Instructions = &settings
+			page.InstructionFiles = strings.Join(settings.Files, "\n")
+			if r.URL.Query().Get("saved") == "1" {
+				page.Notice = "Instructions saved for this workspace."
+			}
+			render(w, page)
+			return
+		}
+		if !protected(w, r) {
+			return
+		}
+		page.InstructionFiles = r.PostForm.Get("instruction_files")
+		settings := instructionSettings{SystemPrompt: r.PostForm.Get("system_prompt"), SkipProjectInstructions: r.PostForm.Get("skip_project_instructions") == "1"}
+		for _, line := range strings.Split(page.InstructionFiles, "\n") {
+			if path := strings.TrimSpace(line); path != "" {
+				settings.Files = append(settings.Files, path)
+			}
+		}
+		if err := saveInstructionSettings(root, settings); err != nil {
+			page.Instructions, page.Error = &settings, err.Error()
+			page.HTTPStatus = http.StatusUnprocessableEntity
+			render(w, page)
+			return
+		}
+		http.Redirect(w, r, "/instructions?saved=1", http.StatusSeeOther)
+	})
+	mux.HandleFunc("/instructions/edit", func(w http.ResponseWriter, r *http.Request) {
+		page := webPage{Title: "Edit instructions", Root: root}
+		if r.Method == http.MethodGet {
+			path := r.URL.Query().Get("path")
+			if name := r.URL.Query().Get("skill"); name != "" {
+				path = skillsDirectory + "/" + name + "/SKILL.md"
+			}
+			draft, err := standardInstructionDraft(root, path)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				return
+			}
+			page.InstructionPath, page.InstructionDraft = path, draft
+			render(w, page)
+			return
+		}
+		if !protected(w, r) {
+			return
+		}
+		page.InstructionPath = r.PostForm.Get("path")
+		page.InstructionDraft = strings.ReplaceAll(r.PostForm.Get("markdown"), "\r\n", "\n")
+		if r.PostForm.Get("action") == "toggle" {
+			if err := toggleStandardSkill(root, page.InstructionPath); err != nil {
+				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				return
+			}
+		} else if err := saveStandardInstruction(root, page.InstructionPath, page.InstructionDraft); err != nil {
+			page.HTTPStatus, page.Error = http.StatusUnprocessableEntity, err.Error()
+			render(w, page)
+			return
+		}
+		http.Redirect(w, r, "/instructions?saved=1", http.StatusSeeOther)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -407,6 +585,10 @@ func webHandlerForRoot(root string) http.Handler {
 		}
 		agentic := r.PostForm.Get("agentic") == "1"
 		cfg := loadProviderConfig(r.PostForm.Get("provider_profile"))
+		cfg.instructionRequest = instructionSettings{
+			SystemPrompt: r.PostForm.Get("system_prompt"),
+			Files:        r.PostForm["instruction_files"],
+		}
 		if cfg.configError != nil {
 			http.Error(w, cfg.configError.Error(), 400)
 			return

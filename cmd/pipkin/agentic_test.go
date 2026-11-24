@@ -18,6 +18,7 @@ import (
 )
 
 func TestAgenticWorkflowReviewsDraft(t *testing.T) {
+	const guidance = "Preserve the public entry point."
 	root := t.TempDir()
 	output := t.TempDir()
 	source := filepath.Join(root, "main.go")
@@ -65,6 +66,9 @@ func TestAgenticWorkflowReviewsDraft(t *testing.T) {
 				http.Error(w, "bad request", 400)
 				return
 			}
+			if !strings.Contains(body.Instructions, guidance) || strings.Contains(body.Input, guidance) {
+				t.Error("workspace guidance was not sent in hosted system instructions")
+			}
 			id := "draft"
 			want := []string{"project.zip"}
 			if strings.Contains(body.Instructions, "draft.zip") {
@@ -88,6 +92,12 @@ func TestAgenticWorkflowReviewsDraft(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("PIPKIN_OUTPUT_DIR", output)
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(guidance), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveInstructionSettings(root, instructionSettings{Files: []string{"AGENTS.md"}}); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PIPKIN_FAKE_KEY", "test")
 	config := filepath.Join(output, "config.json")
 	t.Setenv("PIPKIN_CONFIG", config)
@@ -122,6 +132,9 @@ func TestAgenticWorkflowReviewsDraft(t *testing.T) {
 	var job WorkflowJob
 	if err := json.Unmarshal(data, &job); err != nil || !job.Agentic || job.Status != "completed" || job.InputTokens != 20 {
 		t.Fatalf("unexpected saved session: %+v (%v)", job, err)
+	}
+	if len(job.Instructions) != 1 || job.Instructions[0].Name != "AGENTS.md" || strings.Contains(string(data), guidance) {
+		t.Fatalf("unexpected instruction metadata: %+v", job.Instructions)
 	}
 	review, err := workflowReview(jobDir)
 	if err != nil || len(review.Files) != 1 {
@@ -263,7 +276,9 @@ func TestNormalizeTar(t *testing.T) {
 }
 
 func TestHostedDraftFallsBackToText(t *testing.T) {
+	const guidance = "Keep fallback behaviour compatible."
 	root := t.TempDir()
+	t.Setenv("PIPKIN_OUTPUT_DIR", t.TempDir())
 	input := filepath.Join(root, "input.zip")
 	result := filepath.Join(root, "result.zip")
 	zipFixture(t, input, map[string]string{"README.md": "original"})
@@ -279,6 +294,13 @@ func TestHostedDraftFallsBackToText(t *testing.T) {
 		case "/containers/container/files":
 			fmt.Fprint(w, `{"data":[{"id":"input","path":"/mnt/data/project.zip","source":"user"}]}`)
 		case "/chat/completions":
+			var request struct {
+				Messages []struct{ Role, Content string }
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || len(request.Messages) != 2 ||
+				request.Messages[0].Role != "system" || !strings.Contains(request.Messages[0].Content, guidance) {
+				t.Error("text fallback lost custom system instructions")
+			}
 			fmt.Fprint(w, `{"choices":[{"message":{"content":"{\"changes\":[{\"path\":\"README.md\",\"content\":\"text fallback\",\"delete\":false}]}"}}]}`)
 		default:
 			http.NotFound(w, r)
@@ -286,6 +308,10 @@ func TestHostedDraftFallsBackToText(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := Config{Provider: "openai-archive", BaseURL: server.URL, Model: "test", APIKeyEnv: "PIPKIN_TEST_KEY", MaxContextBytes: 160000}
+	cfg.instructionRequest.SystemPrompt = guidance
+	if _, err := cfg.prepareInstructions(root); err != nil {
+		t.Fatal(err)
+	}
 	var job WorkflowJob
 	trace := &llmTrace{}
 	ctx := context.WithValue(context.Background(), llmTraceKey{}, trace)

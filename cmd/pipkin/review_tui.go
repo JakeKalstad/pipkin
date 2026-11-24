@@ -521,6 +521,10 @@ func showFullDiff(r *bufio.Reader, f ReviewFile, mode string) {
 }
 
 func showDiffPager(r *bufio.Reader, title string, lines []string, toggle func() []string) {
+	showPager(r, " PIPKIN / DIFF: "+title, lines, toggle, coloredDiff)
+}
+
+func showPager(r *bufio.Reader, title string, lines []string, toggle func() []string, format func(string) string) {
 	scroll := 0
 	hint := " ↑↓ scroll  q back"
 	if toggle != nil {
@@ -529,9 +533,9 @@ func showDiffPager(r *bufio.Reader, title string, lines []string, toggle func() 
 	for {
 		h, w := size()
 		height := max(1, h-4)
-		out := []string{trunc(" PIPKIN / DIFF: "+safeDisplayLine(title), w), hint, strings.Repeat("─", w)}
+		out := []string{trunc(safeDisplayLine(title), w), hint, strings.Repeat("─", w)}
 		for i := scroll; i < min(len(lines), scroll+height); i++ {
-			out = append(out, coloredDiff(trunc(safeDisplayLine(lines[i]), w)))
+			out = append(out, format(trunc(safeDisplayLine(lines[i]), w)))
 		}
 		screenLinesANSI(out)
 		switch readKey(r) {

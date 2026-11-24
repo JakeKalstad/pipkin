@@ -57,15 +57,16 @@ func emit(ctx context.Context, event workflowEvent) {
 }
 
 type WorkflowJob struct {
-	PromptPreset    string   `json:"prompt_preset,omitempty"`
-	ProviderProfile string   `json:"provider_profile,omitempty"`
-	Operation       string   `json:"operation,omitempty"`
-	DraftChanged    *bool    `json:"draft_changed,omitempty"`
-	AgentProfile    string   `json:"agent_profile,omitempty"`
-	TextFallback    bool     `json:"text_fallback,omitempty"`
-	ContextOmitted  []string `json:"context_omitted,omitempty"`
-	Unchanged       bool     `json:"unchanged,omitempty"`
-	LangfuseStatus  string   `json:"langfuse_status,omitempty"`
+	Instructions    []instructionSource `json:"instructions,omitempty"`
+	PromptPreset    string              `json:"prompt_preset,omitempty"`
+	ProviderProfile string              `json:"provider_profile,omitempty"`
+	Operation       string              `json:"operation,omitempty"`
+	DraftChanged    *bool               `json:"draft_changed,omitempty"`
+	AgentProfile    string              `json:"agent_profile,omitempty"`
+	TextFallback    bool                `json:"text_fallback,omitempty"`
+	ContextOmitted  []string            `json:"context_omitted,omitempty"`
+	Unchanged       bool                `json:"unchanged,omitempty"`
+	LangfuseStatus  string              `json:"langfuse_status,omitempty"`
 
 	ID           string            `json:"id"`
 	Created      string            `json:"created"`
@@ -279,6 +280,7 @@ func runArchivePass(ctx context.Context, cfg Config, input, output, prompt, draf
 	if draft != "" {
 		instructions += ` A separate draft.zip contains a proposed implementation, not additional source context. Compare it against the original project.zip and the user's request. Check for missed requirements, regressions, and unrelated edits. Fix any problems in the draft and return the complete corrected ZIP. Run relevant checks in the isolated interpreter when possible. Never claim a check you could not run.`
 	}
+	instructions = cfg.withInstructions(instructions)
 	body := map[string]any{"model": cfg.Model, "instructions": instructions, "input": prompt, "tool_choice": "required", "tools": []any{map[string]any{"type": "code_interpreter", "container": map[string]any{"type": "auto", "file_ids": fileIDs}}}, "stream": true}
 	b, _ := json.Marshal(body)
 	var traceInput, traceReply string
@@ -552,8 +554,8 @@ func intNum(v any) int {
 	}
 	return 0
 }
-func workflowSend(ctx context.Context, root, manifest, promptFile string, agentic bool, showHidden ...bool) error {
-	files, err := filesFromJSON(root, manifest, showHidden...)
+func workflowSend(ctx context.Context, root, manifest, promptFile string, agentic, showHidden bool, cfg Config) error {
+	files, err := filesFromJSON(root, manifest, showHidden)
 	if err != nil {
 		return err
 	}
@@ -561,7 +563,7 @@ func workflowSend(ctx context.Context, root, manifest, promptFile string, agenti
 	if err != nil {
 		return err
 	}
-	return workflowSendFiles(ctx, root, files, string(prompt), agentic)
+	return workflowSendConfigured(ctx, root, files, string(prompt), agentic, cfg)
 }
 
 // Every provider and entry point records a reviewable session.
@@ -582,6 +584,10 @@ func workflowSendConfigured(ctx context.Context, root string, files []*Node, pro
 	if agentic && !cfg.supportsAgentic() {
 		return errors.New("agentic mode requires a text or hosted archive provider")
 	}
+	sources, err := cfg.prepareInstructions(root)
+	if err != nil {
+		return err
+	}
 	base := filepath.Join(outputDirectory(), "jobs", filepath.Base(root))
 	if e := os.MkdirAll(base, 0700); e != nil {
 		return e
@@ -591,6 +597,7 @@ func workflowSendConfigured(ctx context.Context, root string, files []*Node, pro
 		return e
 	}
 	job := WorkflowJob{ID: filepath.Base(dir), Created: time.Now().UTC().Format(time.RFC3339), Root: root, Status: "running", Agentic: agentic, Files: map[string]string{}}
+	job.Instructions = sources
 	job.Provider = cfg.Provider
 	job.ProviderProfile = cfg.ProviderProfile
 	job.Model = cfg.Model

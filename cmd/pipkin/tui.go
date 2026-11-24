@@ -166,23 +166,23 @@ func (a *App) render() {
 	if a.cursor >= a.offset+rows {
 		a.offset = a.cursor - rows + 1
 	}
-	shortcuts := "  ↑↓ move  ←→ expand  Space select  z ZIP  p LLM"
+	shortcuts := "  ↑↓ move  ←→ expand  Space toggle  s Select one  z ZIP  p LLM"
 	if a.cfg.supportsAgentic() {
 		shortcuts += "  P Agentic"
 	}
 	if len(a.cfg.ProviderProfiles) > 0 {
 		shortcuts += "  m Model"
 	}
-	shortcuts += "  g/G Git  H Hidden  r Review  i Import  q Quit"
+	shortcuts += "  g/G Git  H Hidden  ? Help  I Instructions  f Free prompt  r Review  i Import  q Quit"
 	if w < utf8.RuneCountInString(shortcuts) {
-		shortcuts = " g/G Git  H Hidden  Space select  z ZIP  p LLM"
+		shortcuts = " ? Help  I Instructions  f Free prompt  s Select one  Space toggle  g/G Git  H Hidden  z ZIP  p LLM"
 		if a.cfg.supportsAgentic() {
-			shortcuts = " g/G Git  H Hidden  p/P LLM  Space select  z ZIP"
+			shortcuts = " ? Help  I Instructions  f Free prompt  s Select one  Space toggle  g/G Git  H Hidden  p LLM  P Agentic  z ZIP"
 		}
 		if len(a.cfg.ProviderProfiles) > 0 {
 			shortcuts += "  m Model"
 		}
-		shortcuts += "  r Review  i Import  q Quit"
+		shortcuts += "  r Review  q Quit"
 	}
 	// The shortcut bar spans the terminal so the sidebar cannot clip it.
 	model := a.cfg.Provider + " / " + a.cfg.Model
@@ -329,6 +329,7 @@ func (a *App) chooseProvider(reader *bufio.Reader) {
 				a.status = cfg.configError.Error()
 				return
 			}
+			cfg.instructionRequest = a.cfg.instructionRequest
 			a.cfg = cfg
 			a.status = "Selected " + cfg.ProviderProfile + " for this session"
 			return

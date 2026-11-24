@@ -183,6 +183,103 @@ class PipkinEndToEnd(unittest.TestCase):
         self.assertEqual((self.project / "beta.txt").read_text(), ORIGINAL["beta.txt"])
         self.assertEqual((self.project / "unselected.txt").read_text(), "Leave this alone\n")
 
+    def test_terminal_edits_standard_instructions(self):
+        editor = self.project.parent / "test-editor"
+        editor.write_text('#!/bin/sh\ngrep -q "^name:" "$1" && exit 0\nprintf "\\nUse targeted tests.\\n" >> "$1"\n')
+        editor.chmod(0o700)
+        self.env["VISUAL"] = str(editor)
+        terminal = Terminal(self.start)
+        self.addCleanup(terminal.close)
+        terminal.expect("I Instructions")
+        terminal.send("?")
+        terminal.expect("PIPKIN / HELP")
+        terminal.expect("/help#http")
+        terminal.expect("/help#mcp")
+        terminal.send("q")
+        terminal.expect("I Instructions")
+        terminal.send("I")
+        terminal.expect("PIPKIN / INSTRUCTIONS")
+        terminal.send("\r")
+        terminal.expect("Saved AGENTS.md")
+        self.assertIn("Use targeted tests.", (self.project / "AGENTS.md").read_text())
+        terminal.send("nreview-migrations\r")
+        terminal.expect("Saved .agents/skills/review-migrations/SKILL.md")
+        skill = self.project / ".agents/skills/review-migrations/SKILL.md"
+        self.assertIn("name: review-migrations", skill.read_text())
+        terminal.send(" ")
+        terminal.expect("(active)")
+        terminal.send("qq")
+        self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
+
+    def test_terminal_free_prompt(self):
+        requests = []
+
+        class TextProvider(BaseHTTPRequestHandler):
+            def do_POST(self):
+                requests.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+                reply = {"choices": [{"message": {"content": "Standalone answer"}}]}
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(reply).encode())
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), TextProvider)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        Path(self.env["PIPKIN_CONFIG"]).write_text(json.dumps({
+            "provider": "vllm",
+            "base_url": f"http://127.0.0.1:{server.server_port}",
+            "model": "test-model",
+        }))
+        terminal = Terminal(self.start)
+        self.addCleanup(terminal.close)
+        terminal.expect("f Free prompt")
+        terminal.send("nf")
+        terminal.expect("PIPKIN / FREE PROMPT HISTORY")
+        terminal.send("\r")
+        terminal.expect("Ctrl+S send")
+        terminal.send("First line\rSecond line\x13")
+        terminal.expect("Standalone answer")
+        terminal.send("\x1b")
+        terminal.expect("PIPKIN / FREE PROMPT HISTORY")
+        terminal.expect("First line Second line")
+        terminal.send("jd")
+        terminal.expect("Press Y to delete")
+        terminal.send("Y")
+        terminal.expect("Conversation deleted.")
+        terminal.send("qq")
+        self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
+        self.assertEqual(requests[0]["messages"][-1]["content"], "First line\nSecond line")
+        self.assertFalse((self.output / "jobs").exists())
+
+    def test_terminal_select_one(self):
+        folder = self.project / "folder"
+        folder.mkdir()
+        (folder / "keep.txt").write_text("Keep me\n")
+        (folder / ".hidden").write_text("Leave me out\n")
+
+        terminal = Terminal(self.start)
+        self.addCleanup(terminal.close)
+        terminal.expect("s Select one")
+        terminal.expect("4 files selected")
+        terminal.send("jsz")
+        terminal.expect("Saved:")
+        archive_path = self.output / "project.zip"
+        with ZipFile(archive_path) as archive:
+            self.assertEqual(archive.namelist(), ["alpha.txt"])
+
+        terminal.send("Hksz")
+        terminal.expect("Hidden files shown")
+        terminal.expect("Saved:")
+        with ZipFile(archive_path) as archive:
+            self.assertEqual(archive.namelist(), ["folder/keep.txt"])
+        terminal.send("q")
+        self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
+
     def test_terminal_select_submit_review_and_copy(self):
         terminal = Terminal(self.start)
         self.addCleanup(terminal.close)
@@ -516,6 +613,7 @@ class PipkinEndToEnd(unittest.TestCase):
         tools = send("tools/list", {})["tools"]
         self.assertEqual({tool["name"] for tool in tools}, {
             "pipkin_pack", "pipkin_submit", "pipkin_jobs", "pipkin_review", "pipkin_apply",
+            "pipkin_prompt", "pipkin_instructions", "pipkin_conversations",
         })
 
         selection = {"root": str(self.project), "paths": list(ORIGINAL)}
