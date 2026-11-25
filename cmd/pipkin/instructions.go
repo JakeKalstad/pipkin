@@ -150,14 +150,21 @@ func resolveInstructions(root string, saved, request instructionSettings) (strin
 	}
 	seen := make(map[string]bool)
 	if !saved.SkipProjectInstructions {
-		body, err := readInstructionFile(root, projectInstructionsFile)
-		if err == nil {
-			if err := add(projectInstructionsFile, body); err != nil {
-				return "", nil, err
-			}
-			seen[projectInstructionsFile] = true
-		} else if !errors.Is(err, os.ErrNotExist) {
+		body, source, err := projectGuidance(root)
+		if err != nil {
 			return "", nil, fmt.Errorf("read %s: %w", projectInstructionsFile, err)
+		}
+		if err := add(source, body); err != nil {
+			return "", nil, err
+		}
+		seen[projectInstructionsFile] = true
+		project, err := readProject(root)
+		if err != nil {
+			return "", nil, err
+		}
+		profile, _ := profileByID(project.Profile)
+		if err := add("Project profile: "+profile.Label, profile.Guidance); err != nil {
+			return "", nil, err
 		}
 	}
 	for _, files := range [][]string{saved.Files, request.Files} {

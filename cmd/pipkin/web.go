@@ -50,8 +50,14 @@ type webGitHistory struct {
 }
 
 type webPage struct {
-	Conversations []conversationSummary
-	Conversation  conversation
+	Workbook                                                     bool
+	WorkbookInput, WorkbookOutput, WorkbookEdits, WorkbookResult string
+	Project                                                      *projectInfo
+	ProjectProfiles                                              []projectProfile
+
+	ProjectGuidance, ProjectGuidanceSource string
+	Conversations                          []conversationSummary
+	Conversation                           conversation
 
 	FreePrompt                                   bool
 	PromptSystem                                 string
@@ -340,6 +346,47 @@ func webHandlerForRoot(root string) http.Handler {
 		build := buildMetadata()
 		render(w, webPage{Title: "About", Root: root, About: &build})
 	})
+	mux.HandleFunc("/workbook", func(w http.ResponseWriter, r *http.Request) {
+		page := webPage{Title: "Workbook", Root: root, Workbook: true}
+		if r.Method != http.MethodGet {
+			if !protected(w, r) {
+				return
+			}
+			page.WorkbookInput = strings.TrimSpace(r.PostForm.Get("file"))
+			page.WorkbookOutput = strings.TrimSpace(r.PostForm.Get("output"))
+			page.WorkbookEdits = r.PostForm.Get("edits")
+			result, err := workbookOperation(r.Context(), root, page.WorkbookInput, page.WorkbookOutput, []byte(strings.TrimSpace(page.WorkbookEdits)))
+			if err != nil {
+				page.Error, page.HTTPStatus = err.Error(), http.StatusUnprocessableEntity
+			} else if formatted, err := json.MarshalIndent(result, "", "  "); err == nil {
+				page.WorkbookResult = string(formatted)
+			}
+		}
+		render(w, page)
+	})
+	mux.HandleFunc("/project", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			if !protected(w, r) {
+				return
+			}
+			action := saveProject
+			if r.PostForm.Get("action") == "init" {
+				action = initializeProject
+			}
+			if err := action(root, r.PostForm.Get("profile")); err != nil {
+				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				return
+			}
+			http.Redirect(w, r, "/project", http.StatusSeeOther)
+			return
+		}
+		project, err := readProject(root)
+		page := webPage{Title: "Project", Root: root, Project: &project, ProjectProfiles: projectProfiles}
+		if err != nil {
+			page.Error = err.Error()
+		}
+		render(w, page)
+	})
 	mux.HandleFunc("/prompt", func(w http.ResponseWriter, r *http.Request) {
 		page := webPage{Title: "Free prompt", Root: root, FreePrompt: true}
 		jsonResponse := strings.Contains(r.Header.Get("Accept"), "application/json")
@@ -431,6 +478,11 @@ func webHandlerForRoot(root string) http.Handler {
 	})
 	mux.HandleFunc("/instructions", func(w http.ResponseWriter, r *http.Request) {
 		page := webPage{Title: "System instructions", Root: root, SkillPaths: workspaceSkills(root)}
+		var guidanceErr error
+		page.ProjectGuidance, page.ProjectGuidanceSource, guidanceErr = projectGuidance(root)
+		if guidanceErr != nil {
+			page.Error = guidanceErr.Error()
+		}
 		if r.Method == http.MethodGet {
 			settings, err := loadInstructionSettings(root)
 			if err != nil {
@@ -567,6 +619,33 @@ func webHandlerForRoot(root string) http.Handler {
 			view.DiffTitle = gitDiffTitle(mode, hash, history)
 		}
 		render(w, page)
+	})
+	mux.HandleFunc("/mkdocs", func(w http.ResponseWriter, r *http.Request) {
+		if !protected(w, r) {
+			return
+		}
+		paths := r.PostForm["files"]
+		if len(paths) == 0 || len(paths) > 20000 {
+			http.Error(w, "select source files for the site", http.StatusBadRequest)
+			return
+		}
+		files, err := selectPaths(root, paths, r.PostForm.Get("show_hidden") == "1")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cfg := loadProviderConfig(r.PostForm.Get("provider_profile"))
+		cfg.instructionRequest = instructionSettings{SystemPrompt: r.PostForm.Get("system_prompt"), Files: r.PostForm["instruction_files"]}
+		ctx := withWorkflowEvents(r.Context(), func(workflowEvent) {})
+		result, err := exportMkDocs(ctx, root, files, r.PostForm.Get("prompt"), cfg)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", "attachment; filename="+filepath.Base(result.ZIP))
+		http.ServeFile(w, r, result.ZIP)
 	})
 	mux.HandleFunc("/submit", func(w http.ResponseWriter, r *http.Request) {
 		if !protected(w, r) {

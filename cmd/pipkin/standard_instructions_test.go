@@ -59,3 +59,38 @@ func TestStandardInstructionsEditor(t *testing.T) {
 		t.Fatalf("symlink returned %d", code)
 	}
 }
+
+func TestEffectiveProjectGuidance(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PIPKIN_OUTPUT_DIR", t.TempDir())
+	for _, content := range []string{"", legacyProjectInstructionsTemplate, "# Custom project notes"} {
+		if err := saveStandardInstruction(root, projectInstructionsFile, content); err != nil {
+			t.Fatal(err)
+		}
+		want := "Built-in default"
+		if strings.HasPrefix(content, "# Custom") {
+			want = projectInstructionsFile
+		}
+		cfg := Config{Provider: "vllm"}
+		sources, err := cfg.prepareInstructions(root)
+		if err != nil || len(sources) != 1 || sources[0].Name != want {
+			t.Fatalf("effective sources: %v %v", sources, err)
+		}
+		w := httptest.NewRecorder()
+		webHandlerForRoot(root).ServeHTTP(w, httptest.NewRequest("GET", "/instructions", nil))
+		preview := "# Custom project notes"
+		if want == "Built-in default" {
+			preview = "Understand the task and the supplied context"
+		}
+		if w.Code != 200 || !strings.Contains(w.Body.String(), preview) {
+			t.Fatalf("instructions page did not show active guidance for %s", want)
+		}
+	}
+	if err := saveInstructionSettings(root, instructionSettings{SkipProjectInstructions: true}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{Provider: "vllm"}
+	if sources, err := cfg.prepareInstructions(root); err != nil || len(sources) != 0 {
+		t.Fatalf("opted-out source: %v %v", sources, err)
+	}
+}

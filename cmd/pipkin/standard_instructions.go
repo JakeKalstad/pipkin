@@ -18,7 +18,7 @@ const skillsDirectory = ".agents/skills"
 
 var skillNamePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
-const projectInstructionsTemplate = `# Project instructions
+const legacyProjectInstructionsTemplate = `# Project instructions
 
 ## Build and test
 
@@ -35,6 +35,39 @@ const projectInstructionsTemplate = `# Project instructions
 
 - Check for missed requirements, regressions, and unrelated edits.
 `
+
+const projectInstructionsTemplate = `# Project instructions
+
+## Understand the task and the supplied context
+
+- Identify the expected behaviour and the entry points, callers, and tests affected by the request.
+- Follow the project's existing patterns. Use conventions and commands found in the supplied README, build files, CI configuration, and tests.
+- If a missing file or requirement blocks a reliable answer, name what you need and explain why. Keep assumptions explicit when you can proceed.
+
+## Make focused changes
+
+- Reuse existing helpers and interfaces. Preserve compatibility for callers and saved data unless the task explicitly changes it.
+- Keep edits within the requested scope. Update tests, API or MCP schemas, and usage documentation when their behaviour changes.
+- Handle failure paths and retries where relevant. Keep credentials out of source, examples, and output.
+
+## Verify and review
+
+- Run the smallest relevant check documented by the project when the environment allows it.
+- Trace user-facing changes through their normal entry points. Review the patch for regressions, incomplete wiring, and unrelated changes.
+- Report the outcome, the checks actually run and their results, and anything that still needs verification.
+`
+
+func projectGuidance(root string) (text, source string, err error) {
+	text, err = readInstructionFile(root, projectInstructionsFile)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", "", err
+	}
+	normalised := strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
+	if normalised == "" || normalised == strings.TrimSpace(legacyProjectInstructionsTemplate) {
+		return projectInstructionsTemplate, "Built-in default", nil
+	}
+	return text, projectInstructionsFile, nil
+}
 
 func standardInstructionPath(rel string) (string, bool) {
 	if rel == projectInstructionsFile {
@@ -53,14 +86,15 @@ func standardInstructionDraft(root, rel string) (string, error) {
 	if !ok {
 		return "", errors.New("choose AGENTS.md or .agents/skills/<name>/SKILL.md")
 	}
+	if name == "" {
+		text, _, err := projectGuidance(root)
+		return text, err
+	}
 	text, err := readInstructionFile(root, rel)
 	if !errors.Is(err, os.ErrNotExist) {
 		return text, err
 	}
-	if name == "" {
-		return projectInstructionsTemplate, nil
-	}
-	return fmt.Sprintf("---\nname: %s\ndescription: Describe what this skill does and when to use it.\n---\n\n# %s\n\n## Workflow\n\n1. Inspect the relevant files and clarify the expected result.\n2. Make the smallest change that meets the request.\n3. Verify the result and report the checks you ran.\n", name, name), nil
+	return fmt.Sprintf("---\nname: %s\ndescription: Apply the %s workflow when a task explicitly calls for it.\n---\n\n# %s\n\n## Workflow\n\n1. Identify the trigger, expected outcome, and relevant files.\n2. Inspect the normal entry point and its callers before changing behaviour.\n3. Check the primary path and one relevant failure or boundary case.\n4. Report findings with file references, checks run, and any missing evidence.\n", name, name, name), nil
 }
 
 func workspaceSkills(root string) []string {
@@ -251,20 +285,28 @@ func (a *App) editStandardInstructions(reader *bufio.Reader, restore func()) err
 }
 
 func editInstructionInTerminal(root, rel string, restore func()) (bool, error) {
-	_, statErr := statSelectedPath(root, rel)
-	creating := errors.Is(statErr, os.ErrNotExist)
+	original, readErr := readInstructionFile(root, rel)
 	draft, err := standardInstructionDraft(root, rel)
 	if err != nil {
 		return false, err
 	}
-	f, err := os.CreateTemp("", "pipkin-*.md")
-	if err != nil {
+	text, err := editTerminalDocument(root, "*.md", draft, maxInstructionBytes, restore)
+	if err != nil || (readErr == nil && string(text) == original) {
 		return false, err
+	}
+	err = saveStandardInstruction(root, rel, string(text))
+	return err == nil, err
+}
+
+func editTerminalDocument(root, pattern, draft string, limit int, restore func()) ([]byte, error) {
+	f, err := os.CreateTemp("", "pipkin-"+pattern)
+	if err != nil {
+		return nil, err
 	}
 	defer os.Remove(f.Name())
 	_, err = f.WriteString(draft)
 	if err = errors.Join(err, f.Close()); err != nil {
-		return false, err
+		return nil, err
 	}
 	editor := strings.Fields(os.Getenv("VISUAL"))
 	if len(editor) == 0 {
@@ -280,17 +322,12 @@ func editInstructionInTerminal(root, rel string, restore func()) (bool, error) {
 	_, rawErr := stty("raw", "-echo")
 	fmt.Print("\x1b[?25l")
 	if err = errors.Join(err, rawErr); err != nil {
-		return false, err
+		return nil, err
 	}
 	edited, err := os.Open(f.Name())
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	defer edited.Close()
-	text, err := readLimited(edited, maxInstructionBytes)
-	if err != nil || (!creating && string(text) == draft) {
-		return false, err
-	}
-	err = saveStandardInstruction(root, rel, string(text))
-	return err == nil, err
+	return readLimited(edited, limit)
 }

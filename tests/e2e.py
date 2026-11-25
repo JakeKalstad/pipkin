@@ -211,6 +211,45 @@ class PipkinEndToEnd(unittest.TestCase):
         terminal.send("qq")
         self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
 
+    def test_terminal_mkdocs_export(self):
+        class DocsProvider(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                site = {"title": "Usage guide", "pages": [
+                    {"slug": "index", "title": "Overview", "markdown": "# Overview"},
+                ]}
+                response = {"choices": [{"message": {"content": json.dumps(site)}}]}
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode())
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), DocsProvider)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        Path(self.env["PIPKIN_CONFIG"]).write_text(json.dumps({
+            "provider": "vllm",
+            "base_url": f"http://127.0.0.1:{server.server_port}",
+            "model": "test-model",
+        }))
+        terminal = Terminal(self.start)
+        self.addCleanup(terminal.close)
+        terminal.expect("D MkDocs")
+        terminal.send("D")
+        terminal.expect("MkDocs brief")
+        terminal.send("Write a usage guide\r")
+        terminal.expect("MkDocs ZIP saved:")
+        terminal.send("q")
+        self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
+        site, = (self.output / "mkdocs").glob("*.zip")
+        with ZipFile(site) as archive:
+            self.assertIn(b"Usage guide", archive.read("mkdocs.yml"))
+            self.assertEqual(archive.read("docs/index.md"), b"# Overview\n")
+
     def test_terminal_free_prompt(self):
         requests = []
 
@@ -255,6 +294,27 @@ class PipkinEndToEnd(unittest.TestCase):
         self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
         self.assertEqual(requests[0]["messages"][-1]["content"], "First line\nSecond line")
         self.assertFalse((self.output / "jobs").exists())
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires xdg-open")
+    def test_terminal_opens_output_folder(self):
+        command = self.project.parent / "xdg-open"
+        captured = self.project.parent / "opened"
+        command.write_text('#!/bin/sh\nprintf "%s" "$1" > "$PIPKIN_TEST_OPENED"\n')
+        command.chmod(0o700)
+        self.env["PATH"] = str(command.parent) + os.pathsep + self.env["PATH"]
+        self.env["PIPKIN_TEST_OPENED"] = str(captured)
+        terminal = Terminal(self.start)
+        self.addCleanup(terminal.close)
+        terminal.expect("O Open output folder")
+        terminal.send("z")
+        terminal.expect("Saved:")
+        terminal.expect("O Open output folder")
+        terminal.send("Oq")
+        self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
+        deadline = time.monotonic() + TIMEOUT
+        while not captured.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(captured.read_text(), str(self.output))
 
     def test_terminal_select_one(self):
         folder = self.project / "folder"
@@ -613,7 +673,7 @@ class PipkinEndToEnd(unittest.TestCase):
         tools = send("tools/list", {})["tools"]
         self.assertEqual({tool["name"] for tool in tools}, {
             "pipkin_pack", "pipkin_submit", "pipkin_jobs", "pipkin_review", "pipkin_apply",
-            "pipkin_prompt", "pipkin_instructions", "pipkin_conversations",
+            "pipkin_prompt", "pipkin_instructions", "pipkin_conversations", "pipkin_project", "pipkin_workbook", "pipkin_mkdocs",
         })
 
         selection = {"root": str(self.project), "paths": list(ORIGINAL)}

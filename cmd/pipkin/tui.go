@@ -17,6 +17,7 @@ import (
 // Restrict work in the renderer to lightweight scans of local metadata.
 type recentArtifact struct {
 	name      string
+	path      string
 	status    string
 	info      string
 	timestamp time.Time
@@ -40,7 +41,7 @@ func recentArtifacts(root string) (archives, jobs []recentArtifact) {
 				continue
 			}
 			if info, err := e.Info(); err == nil {
-				archives = append(archives, recentArtifact{name: e.Name(), info: humanBytes(info.Size()), timestamp: info.ModTime()})
+				archives = append(archives, recentArtifact{name: e.Name(), path: filepath.Join(base, e.Name()), info: humanBytes(info.Size()), timestamp: info.ModTime()})
 			}
 		}
 	}
@@ -64,7 +65,7 @@ func recentArtifacts(root string) (archives, jobs []recentArtifact) {
 					when = info.ModTime()
 				}
 			}
-			jobs = append(jobs, recentArtifact{name: job.ID, status: job.Status, info: job.Model, timestamp: when})
+			jobs = append(jobs, recentArtifact{name: job.ID, path: filepath.Join(jobDir, e.Name()), status: job.Status, info: job.Model, timestamp: when})
 		}
 	}
 	sort.Slice(archives, func(i, j int) bool { return archives[i].timestamp.After(archives[j].timestamp) })
@@ -101,7 +102,8 @@ func (a *App) cachedRecent() (archives, jobs []recentArtifact) {
 	}
 	return a.cachedArchives, a.cachedJobs
 }
-func (a *App) sidePanel(width int) []string {
+func (a *App) sidePanel(width int) ([]string, map[int]string) {
+	links := make(map[int]string)
 	spinner := loadingSymbol(a.spinnerFrame)
 	lines := []string{
 		`  PIPKIN / CODE COURIER`,
@@ -132,19 +134,21 @@ func (a *App) sidePanel(width int) []string {
 		lines = append(lines, "  No parcels packed yet")
 	}
 	for _, item := range archives {
-		lines = append(lines, "  "+item.name, fmt.Sprintf("  %s  |  %s", item.timestamp.Format("Jan 02 15:04"), item.info))
+		links[len(lines)] = outputFolderURL(item.path)
+		lines = append(lines, "  "+safeDisplayLine(item.name), fmt.Sprintf("  %s  |  %s", item.timestamp.Format("Jan 02 15:04"), item.info))
 	}
 	lines = append(lines, "", "  RECENT ATTEMPTS (r to review)")
 	if len(jobs) == 0 {
 		lines = append(lines, "  No jobs yet")
 	}
 	for _, item := range jobs {
-		lines = append(lines, "  "+item.name+"  ["+item.status+"]", "  "+item.info)
+		links[len(lines)] = outputFolderURL(item.path)
+		lines = append(lines, "  "+safeDisplayLine(item.name)+"  ["+item.status+"]", "  "+item.info)
 	}
 	for i, s := range lines {
 		lines[i] = trunc(s, width)
 	}
-	return lines
+	return lines, links
 }
 func (a *App) render() {
 	h, w := size()
@@ -159,6 +163,7 @@ func (a *App) render() {
 	if a.traceStatus != "" {
 		screenHeight--
 	}
+	screenHeight-- // Output folder link
 	rows := max(1, screenHeight-7)
 	if a.cursor < a.offset {
 		a.offset = a.cursor
@@ -173,14 +178,14 @@ func (a *App) render() {
 	if len(a.cfg.ProviderProfiles) > 0 {
 		shortcuts += "  m Model"
 	}
-	shortcuts += "  g/G Git  H Hidden  ? Help  I Instructions  f Free prompt  r Review  i Import  q Quit"
+	shortcuts += "  g/G Git  H Hidden  ? Help  J Project  I Instructions  f Free prompt  D MkDocs  r Review  i Import  q Quit"
 	if w < utf8.RuneCountInString(shortcuts) {
-		shortcuts = " ? Help  I Instructions  f Free prompt  s Select one  Space toggle  g/G Git  H Hidden  z ZIP  p LLM"
+		shortcuts = " ? Help  D MkDocs  J Project  I Instructions  f Free prompt  s Select one  Space toggle  g/G Git  H Hidden  z ZIP  p LLM"
 		if a.cfg.supportsAgentic() {
-			shortcuts = " ? Help  I Instructions  f Free prompt  s Select one  Space toggle  g/G Git  H Hidden  p LLM  P Agentic  z ZIP"
+			shortcuts = " ? Help  D MkDocs  J Project  I Instructions  f Free prompt  s Select one  p LLM  P Agentic  Space toggle  g/G Git  H Hidden  z ZIP"
 		}
 		if len(a.cfg.ProviderProfiles) > 0 {
-			shortcuts += "  m Model"
+			shortcuts = " m Model " + shortcuts
 		}
 		shortcuts += "  r Review  q Quit"
 	}
@@ -229,9 +234,15 @@ func (a *App) render() {
 		status = loadingSymbol(a.spinnerFrame) + " " + a.spinnerMessage
 	}
 	lines = append(lines, strings.Repeat("─", max(0, leftWidth)), fmt.Sprintf(" %d files selected  |  %s", len(selected), status))
+	outputLinks := make(map[int]string, 2)
+	if a.lastOutput != "" && !a.busy && (strings.Contains(a.status, a.lastOutput) || strings.HasPrefix(a.status, "Delivery saved")) {
+		outputLinks[len(lines)-1] = outputFolderURL(a.lastOutput)
+	}
 	if a.editing {
 		label := " Prompt (Enter send, Esc cancel):"
-		if a.agentic {
+		if a.mkdocsExport {
+			label = " MkDocs brief (Enter export, Esc cancel):"
+		} else if a.agentic {
 			label = " Agentic prompt (Enter send, Esc cancel):"
 			if name, _, err := a.cfg.activeAgentProfile(); err == nil && name != "builtin" {
 				label += " " + name
@@ -239,11 +250,13 @@ func (a *App) render() {
 		}
 		lines = append(lines, label, " > "+a.prompt)
 	} else {
-		lines = append(lines, " ZIP: "+a.outputPath(""))
+		outputLinks[len(lines)] = outputFolderURL(a.outputPath(""))
+		lines = append(lines, " ZIP: "+safeDisplayLine(a.outputPath("")))
 	}
 	var side []string
+	var sideLinks map[int]string
 	if rightWidth > 0 {
-		side = a.sidePanel(rightWidth)
+		side, sideLinks = a.sidePanel(rightWidth)
 	}
 	out := strings.Builder{}
 	out.WriteString("\x1b[2J\x1b[H")
@@ -261,13 +274,13 @@ func (a *App) render() {
 			l = lines[i]
 		}
 		if rightWidth == 0 || i == 1 {
-			out.WriteString(trunc(l, w))
+			out.WriteString(terminalLink(trunc(l, w), outputLinks[i]))
 		} else {
 			r := ""
 			if i < len(side) {
 				r = side[i]
 			}
-			out.WriteString(terminalPad(trunc(l, leftWidth), leftWidth) + " │ " + trunc(r, rightWidth))
+			out.WriteString(terminalLink(terminalPad(trunc(l, leftWidth), leftWidth), outputLinks[i]) + " │ " + terminalLink(trunc(r, rightWidth), sideLinks[i]))
 		}
 		if i < count-1 {
 			out.WriteString("\r\n")
@@ -276,6 +289,12 @@ func (a *App) render() {
 	if a.traceStatus != "" {
 		out.WriteString("\r\n" + trunc(" "+a.traceStatus, w))
 	}
+	target := a.lastOutput
+	if target == "" {
+		target = filepath.Join(outputDirectory(), "output.zip")
+	}
+	label := trunc(" O Open output folder: "+safeDisplayLine(outputFolder(target)), w)
+	out.WriteString("\r\n" + terminalLink(label, outputFolderURL(target)))
 	for _, link := range links {
 		label := trunc(" "+link.Label+": "+link.URL, w)
 		fmt.Fprintf(&out, "\r\n\x1b]8;;%s\x1b\\%s\x1b]8;;\x1b\\", link.URL, label)
@@ -343,12 +362,12 @@ func (a *App) submitWithSpinner(prompt string) error {
 	a.spinnerMessage = "Packaging request..."
 	events := make(chan workflowEvent, 32)
 	done := make(chan error, 1)
-	var completion, trace string
+	var completion, trace, output string
 	a.traceStatus = ""
 	ctx := withWorkflowEvents(context.Background(), func(e workflowEvent) {
 		switch e.Type {
 		case "complete":
-			completion = e.Message
+			completion, output = e.Message, e.Path
 		case "trace":
 			trace = e.Message
 		}
@@ -365,6 +384,10 @@ func (a *App) submitWithSpinner(prompt string) error {
 		select {
 		case err := <-done:
 			a.status = completion
+			if output != "" {
+				a.lastOutput = output
+				a.recentAt = time.Time{}
+			}
 			a.traceStatus = trace
 			return err
 		case e := <-events:
@@ -386,6 +409,17 @@ func (a *App) submitWithSpinner(prompt string) error {
 
 func (a *App) toggleHidden() error {
 	show := !a.showHidden
+	if err := a.rescanTree(show); err != nil {
+		return err
+	}
+	a.status = "Hidden files excluded"
+	if show {
+		a.status = "Hidden files shown. Select the hidden files or folders to include."
+	}
+	return nil
+}
+
+func (a *App) rescanTree(show bool) error {
 	root := &Node{name: a.root.name, dir: true, expanded: true, includeHidden: show}
 	if err := scan(root, a.cwd); err != nil {
 		return err
@@ -406,9 +440,5 @@ func (a *App) toggleHidden() error {
 	restore(a.root, root)
 	a.root, a.showHidden = root, show
 	a.refresh()
-	a.status = "Hidden files excluded"
-	if show {
-		a.status = "Hidden files shown. Select the hidden files or folders to include."
-	}
 	return nil
 }

@@ -380,7 +380,7 @@ With `LISTEN_URL`, `langfuse_url`, or `LANGFUSE_BASE_URL` configured, Pipkin dis
 
 ### System instructions and Markdown sources
 
-Pipkin loads the root `AGENTS.md` by default for text and hosted archive deliveries. Use it for build commands, project conventions, and review rules. To opt out, select **Skip automatic AGENTS.md loading** under **Instructions**. Explicit Markdown paths remain available for project-specific layouts.
+Pipkin loads project guidance by default for text and hosted archive deliveries and Free prompt. It uses root `AGENTS.md` when customised and the built-in default when the file is missing, blank, or contains the original starter template. The web Instructions page shows which guidance will be used. Use it for build commands, project conventions, and review rules. To opt out, select **Skip automatic project guidance** under **Instructions**. Explicit Markdown paths remain available for project-specific layouts.
 
 Store reusable Agent Skills as `.agents/skills/<skill-name>/SKILL.md`. Pipkin lists these skills and sends their Markdown when you enable them. Use **Instructions** in the web UI to create or edit either format and to enable or disable skills. The browser editor supplies starter text, including `name` and `description` front matter for a new skill. The text is saved directly in the workspace and can be checked into Git.
 
@@ -408,6 +408,61 @@ Successful exchanges are saved locally per workspace and sorted by recent activi
 For HTTP, use `GET /prompt` for history or `GET /prompt?conversation=ID` for a transcript. POST an optional `conversation` field to continue a thread or omit it to start one. Use `action=delete` and the conversation ID to delete. POST uses URL-encoded fields and the form's CSRF token. HTML submissions redirect to the conversation, while `Accept: application/json` returns `{"reply":"...","conversation":"ID"}`. JSON GET requests return the history or transcript.
 
 For MCP, call `pipkin_prompt` with an absolute `root`, a `prompt`, and the optional `conversation` ID. Use `pipkin_conversations` with `root` and `action` (`list`, `read`, or `delete`). Read and delete also require `conversation`. HTTP and MCP prompt submissions accept optional `provider_profile`, `system_prompt`, and `instruction_files` (repeated form fields over HTTP, an array over MCP).
+
+### Project profiles
+
+Open **Project** in the web UI or press `J` in the TUI. Pipkin checks the workspace root for software manifests and source files. Other project guesses can use recognizable directory names. Ambiguous workspaces use General. The initial profile is recorded in `.pipkin-project.json` on interactive startup, and an explicit selection replaces the guess.
+
+Choose **Existing software**, **New software**, **Research**, **Grant, marketing, seed, or sales package**, or **Job search**. The selected profile contributes guidance alongside `AGENTS.md` and workspace instructions. Initialisation creates a local Git repository when needed and writes a profile-specific starter README if one is absent. It leaves existing README files intact.
+
+```sh
+pipkin --project .
+pipkin --project-profile research .
+pipkin --init-project pitch ./seed-round
+```
+
+The HTTP interface uses `GET /project` and URL-encoded `POST /project` with `profile` and optional `action=init`. MCP exposes `pipkin_project(root, action, profile?)` with actions `show`, `set`, and `init`.
+
+### XLSX workbooks
+
+Install `openpyxl>=3.1` in a Python environment and set `PIPKIN_XLSX_PYTHON` to that environment's Python if needed. **Workbook** in the web UI previews sheet names, dimensions, and the first 20 rows and 12 columns of up to 20 sheets. To edit, supply a JSON array of cells and a new output path. Pipkin returns the before-and-after values and writes a separate copy. The source stays intact.
+
+```json
+[
+  {"sheet":"Budget","cell":"B2","value":4500},
+  {"sheet":"Budget","cell":"B5","kind":"formula","value":"=SUM(B2:B4)"}
+]
+```
+
+```sh
+pipkin --workbook budget.xlsx .
+pipkin --workbook budget.xlsx --workbook-edits edits.json --workbook-output budget-reviewed.xlsx .
+```
+
+Use `null` to clear a cell. Strings are literal unless you specify `kind: "formula"`. Formula expressions are saved for the spreadsheet application to calculate. The editor is for cell values and formulas in existing sheets. Advanced workbook features may be rejected if the library cannot preserve them.
+
+Use `GET /workbook` for the form and `POST /workbook` with `file` and optional `output` and `edits` (JSON) plus the form's CSRF token. MCP exposes the same operation as `pipkin_workbook(root, file, output?, edits?)`, with edits given as an array. In the TUI, highlight an XLSX workbook and press `W`. Press Enter to preview or `e` to enter an output path and a JSON cell edit list in your terminal editor.
+
+### Export an MkDocs site
+
+Select the source files for the site and describe what readers should learn. For example, ask for an onboarding guide with setup and usage pages, or a research summary with findings, evidence, and limitations. Press `D` in the TUI or choose **Export MkDocs ZIP** in the web picker. The text provider receives the selected text plus the workspace's profile and instructions. The archive contains the generated Markdown, navigation, configuration, dependencies, and serving instructions. The selected files remain in the workspace, and any context omissions are listed in the exported README.
+
+```sh
+pipkin --mkdocs --files-from files.json --prompt-file docs-brief.md .
+```
+
+CLI and MCP return the saved ZIP path under the Pipkin output directory's `mkdocs` folder. Unzip the archive, then run these commands in the extracted directory:
+
+```sh
+python3 -m pip install -r requirements.txt
+mkdocs serve
+```
+
+Run `mkdocs build` in the same directory if you want static HTML in `site/`. The export is a source site using the built-in MkDocs theme and generated Markdown pages. It uses a single documentation-generation pass.
+
+**HTTP:** Send a URL-encoded `POST /mkdocs` with the file picker's `csrf`, repeated `files`, and `prompt`. Optional fields include `provider_profile`, `system_prompt`, repeated `instruction_files`, and `show_hidden=1`. Success returns a ZIP attachment.
+
+**MCP:** Call `pipkin_mkdocs(root, paths, prompt)` with optional `provider_profile`, `system_prompt`, and `instruction_files`. It returns `zip` and any `omitted` paths.
 
 ## Web HTTP API
 
@@ -571,6 +626,8 @@ pipkin --git-diff ~/pipkin/outputs/jobs/PROJECT/job-ID
 On wide terminals, the file picker shares the screen with Parcel, recent ZIPs, and saved requests. File-edit requests are saved as reviewable sessions.
 
 **File picker:** `space` select, `z` package, `p` prompt and send, uppercase `P` start an agentic prompt with the selected provider, `r` review completed deliveries, `i` import an existing `<project>.zip` + `<project>-llm.zip` pair from the output directory, `q` quit.
+
+Click **Open output folder** in a terminal that supports OSC 8 file links (some terminals use Ctrl+click). Recent archive and job names also link to their folders. Press uppercase `O` to open the latest successful output in the system file manager, or the configured outputs directory before the first save.
 
 ### Prompt the selected files
 

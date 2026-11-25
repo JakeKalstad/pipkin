@@ -27,18 +27,21 @@ type mcpCall struct {
 	Arguments json.RawMessage `json:"arguments"`
 }
 type mcpArgs struct {
-	Conversation     string   `json:"conversation"`
-	Action           string   `json:"action"`
-	Markdown         *string  `json:"markdown"`
-	ProviderProfile  string   `json:"provider_profile"`
-	SystemPrompt     string   `json:"system_prompt"`
-	InstructionFiles []string `json:"instruction_files"`
-	Root             string   `json:"root"`
-	Paths            []string `json:"paths"`
-	Agentic          bool     `json:"agentic"`
-	Prompt           string   `json:"prompt"`
-	Job              string   `json:"job"`
-	File             string   `json:"file"`
+	ProjectProfile   string          `json:"profile"`
+	Output           string          `json:"output"`
+	Edits            json.RawMessage `json:"edits"`
+	Conversation     string          `json:"conversation"`
+	Action           string          `json:"action"`
+	Markdown         *string         `json:"markdown"`
+	ProviderProfile  string          `json:"provider_profile"`
+	SystemPrompt     string          `json:"system_prompt"`
+	InstructionFiles []string        `json:"instruction_files"`
+	Root             string          `json:"root"`
+	Paths            []string        `json:"paths"`
+	Agentic          bool            `json:"agentic"`
+	Prompt           string          `json:"prompt"`
+	Job              string          `json:"job"`
+	File             string          `json:"file"`
 }
 
 func mcpTool(name, description string, properties map[string]any, required ...string) map[string]any {
@@ -51,6 +54,21 @@ func mcpTools() []map[string]any {
 	text := map[string]any{"type": "string"}
 	instructionFiles := map[string]any{"type": "array", "items": text}
 	return []map[string]any{
+		mcpTool("pipkin_mkdocs", "Create an MkDocs source ZIP from selected project files and a documentation brief", map[string]any{
+			"root": root, "paths": paths, "prompt": text, "provider_profile": text,
+			"system_prompt": text, "instruction_files": instructionFiles,
+		}, "root", "paths", "prompt"),
+		mcpTool("pipkin_project", "Show, select, or initialise the workspace project profile", map[string]any{
+			"root": root, "action": map[string]any{"type": "string", "enum": []string{"show", "set", "init"}},
+			"profile": text,
+		}, "root", "action"),
+		mcpTool("pipkin_workbook", "Inspect XLSX sheets or apply explicit cell edits to a separate workbook copy", map[string]any{
+			"root": root, "file": text, "output": text,
+			"edits": map[string]any{"type": "array", "items": map[string]any{"type": "object",
+				"properties": map[string]any{"sheet": text, "cell": text, "value": map[string]any{},
+					"kind": map[string]any{"type": "string", "enum": []string{"value", "formula"}}},
+				"required": []string{"sheet", "cell", "value"}}},
+		}, "root", "file"),
 		mcpTool("pipkin_prompt", "Send a text-only prompt using workspace instructions. Returns the response without creating a delivery or attaching project files", map[string]any{
 			"root": root, "prompt": text, "system_prompt": text, "instruction_files": instructionFiles, "provider_profile": text, "conversation": text,
 		}, "root", "prompt"),
@@ -122,6 +140,43 @@ func mcpCallTool(call mcpCall) (any, error) {
 		return nil, err
 	}
 	switch call.Name {
+	case "pipkin_mkdocs":
+		root, err := mcpProject(a.Root)
+		if err != nil {
+			return nil, err
+		}
+		files, err := filesFromPaths(root, a.Paths)
+		if err != nil {
+			return nil, err
+		}
+		cfg := loadProviderConfig(a.ProviderProfile)
+		cfg.instructionRequest = instructionSettings{SystemPrompt: a.SystemPrompt, Files: a.InstructionFiles}
+		ctx := withWorkflowEvents(context.Background(), func(workflowEvent) {})
+		return exportMkDocs(ctx, root, files, a.Prompt, cfg)
+	case "pipkin_project", "pipkin_workbook":
+		root, err := mcpProject(a.Root)
+		if err != nil {
+			if call.Name != "pipkin_project" || a.Action != "init" || !filepath.IsAbs(a.Root) || !errors.Is(err, os.ErrNotExist) {
+				return nil, err
+			}
+			root = filepath.Clean(a.Root)
+		}
+		if call.Name == "pipkin_workbook" {
+			return workbookOperation(context.Background(), root, a.File, a.Output, a.Edits)
+		}
+		switch a.Action {
+		case "show":
+		case "set":
+			err = saveProject(root, a.ProjectProfile)
+		case "init":
+			err = initializeProject(root, a.ProjectProfile)
+		default:
+			return nil, fmt.Errorf("unknown project action %q", a.Action)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return readProject(root)
 	case "pipkin_prompt", "pipkin_instructions", "pipkin_conversations":
 		root, err := mcpProject(a.Root)
 		if err != nil {
