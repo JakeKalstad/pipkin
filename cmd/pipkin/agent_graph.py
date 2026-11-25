@@ -41,7 +41,16 @@ def main() -> None:
     graph.add_node("draft", draft)
     graph.add_node("review", review)
     graph.add_node("verify", verify)
-    graph.add_edge(START, "draft")
+    def plan(state: Delivery) -> Delivery:
+        run_stage("plan")
+        return state
+
+    if sys.argv[3] == "true":
+        graph.add_node("plan", plan)
+        graph.add_edge(START, "plan")
+        graph.add_edge("plan", "draft")
+    else:
+        graph.add_edge(START, "draft")
     graph.add_edge("draft", "review")
     graph.add_edge("verify", END)
 

@@ -37,14 +37,14 @@ func TestStandardInstructionsEditor(t *testing.T) {
 	}
 	cfg := Config{Provider: "vllm"}
 	sources, err := cfg.prepareInstructions(root)
-	if err != nil || len(sources) != 3 || sources[0].Name != "AGENTS.md" {
+	if err != nil || len(sources) != 4 || sources[1].Name != "AGENTS.md" {
 		t.Fatalf("defaults: %v %v", sources, err)
 	}
 	if code := post(path, "toggle", ""); code != 303 {
 		t.Fatalf("enable skill: %d", code)
 	}
 	sources, err = cfg.prepareInstructions(root)
-	if err != nil || len(sources) != 4 || sources[3].Name != path || !strings.Contains(cfg.instructionText, "Check rollback.") {
+	if err != nil || len(sources) != 5 || sources[4].Name != path || !strings.Contains(cfg.instructionText, "Check rollback.") {
 		t.Fatalf("active skill: %v %v", sources, err)
 	}
 	if code := post("../AGENTS.md", "", "invalid"); code != 422 {
@@ -73,7 +73,7 @@ func TestEffectiveProjectGuidance(t *testing.T) {
 		}
 		cfg := Config{Provider: "vllm"}
 		sources, err := cfg.prepareInstructions(root)
-		if err != nil || len(sources) != 3 || sources[0].Name != want {
+		if err != nil || len(sources) != 4 || sources[1].Name != want {
 			t.Fatalf("effective sources: %v %v", sources, err)
 		}
 		w := httptest.NewRecorder()

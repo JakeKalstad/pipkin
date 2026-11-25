@@ -238,7 +238,9 @@ func loadProviderConfig(selectedProfile string) Config {
 		}
 		c.Provider, c.BaseURL, c.Model, c.APIKeyEnv = profile.Provider, profile.BaseURL, profile.Model, profile.APIKeyEnv
 		c.MaxOutputTokens = profile.MaxOutputTokens
-		c.SystemPrompt = profile.SystemPrompt
+		if strings.TrimSpace(profile.SystemPrompt) != "" {
+			c.SystemPrompt = profile.SystemPrompt
+		}
 		c.FreePromptTools = profile.FreePromptTools
 		if profile.MaxContextBytes > 0 {
 			c.MaxContextBytes = profile.MaxContextBytes

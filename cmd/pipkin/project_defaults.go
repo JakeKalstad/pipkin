@@ -169,12 +169,26 @@ func (c Config) deliveryAgentProfile(root string) (string, AgentProfile, error) 
 	name = "project:" + project.Profile
 	if _, exists := c.AgentProfiles[name]; exists {
 		profile, err := c.agentProfileByName(name)
-		return name, profile, err
+		return name, c.resolveProjectRunner(profile), err
 	}
-	profile := defaultsByProject[project.Profile].agent
-	profile.Runner = "builtin"
-	if c.LangGraphPython != "" {
-		profile.Runner = "langgraph"
+	return name, c.resolveProjectRunner(defaultProjectAgent(project.Profile)), nil
+}
+
+func defaultProjectAgent(id string) AgentProfile {
+	profile := defaultsByProject[id].agent
+	profile.Runner = "auto"
+	project, _ := profileByID(id)
+	profile.SystemPrompt = defaultAgentSystemPrompt + "\n\nProject scope: " + project.Guidance
+	profile.PlanFocus = "Identify acceptance criteria, affected resources, and verification steps. " + profile.DraftFocus
+	return profile
+}
+
+func (c Config) resolveProjectRunner(profile AgentProfile) AgentProfile {
+	if profile.Runner == "auto" {
+		profile.Runner = "builtin"
+		if c.LangGraphPython != "" {
+			profile.Runner = "langgraph"
+		}
 	}
-	return name, profile, nil
+	return profile
 }

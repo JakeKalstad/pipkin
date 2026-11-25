@@ -57,10 +57,34 @@ func profileDraft() (string, string, error) {
 	if settings.AgentProfiles == nil {
 		settings.AgentProfiles = map[string]AgentProfile{}
 	}
+	if strings.TrimSpace(settings.SystemPrompt) == "" {
+		settings.SystemPrompt = defaultProviderSystemPrompt
+	}
+	for name, profile := range settings.ProviderProfiles {
+		if strings.TrimSpace(profile.SystemPrompt) == "" {
+			profile.SystemPrompt = settings.SystemPrompt
+			settings.ProviderProfiles[name] = profile
+		}
+	}
 	cfg := Config{AgentProfiles: settings.AgentProfiles}
+	if settings.AgentProfile == "" {
+		settings.AgentProfile = "project"
+	}
+	for _, project := range projectProfiles {
+		name := "project:" + project.ID
+		if _, exists := settings.AgentProfiles[name]; !exists {
+			settings.AgentProfiles[name] = defaultProjectAgent(project.ID)
+		}
+	}
 	for _, name := range []string{"builtin", "focused", "thorough"} {
 		if _, exists := settings.AgentProfiles[name]; !exists {
 			settings.AgentProfiles[name], _ = cfg.agentProfileByName(name)
+		}
+	}
+	for name, profile := range settings.AgentProfiles {
+		if strings.TrimSpace(profile.SystemPrompt) == "" {
+			profile.SystemPrompt = defaultAgentSystemPrompt
+			settings.AgentProfiles[name] = profile
 		}
 	}
 	draft, err := json.MarshalIndent(settings, "", "  ")
@@ -111,7 +135,7 @@ func validateProfileSettings(settings profileSettings) error {
 		}
 	}
 	for name, profile := range settings.AgentProfiles {
-		if strings.TrimSpace(name) == "" || !validPrompt(profile.SystemPrompt) || !validPrompt(profile.VerificationFocus) {
+		if strings.TrimSpace(name) == "" || !validPrompt(profile.SystemPrompt) || !validPrompt(profile.VerificationFocus) || !validPrompt(profile.PlanFocus) {
 			return fmt.Errorf("invalid name or system prompt in agent profile %q", name)
 		}
 		if _, err := cfg.agentProfileByName(name); err != nil {

@@ -76,7 +76,7 @@ func TestWorkspaceInstructionsWebAndMetadata(t *testing.T) {
 	for _, source := range sources {
 		names = append(names, source.Name)
 	}
-	if !reflect.DeepEqual(names, []string{"Workspace system prompt", "Built-in default", "Project profile: General", "Bundled skill: deliverable-review", path, "Delivery system prompt"}) ||
+	if !reflect.DeepEqual(names, []string{"Provider system prompt", "Workspace system prompt", "Built-in default", "Project profile: General", "Bundled skill: deliverable-review", path, "Delivery system prompt"}) ||
 		!strings.Contains(cfg.instructionText, "Review updated callers.") {
 		t.Fatalf("resolved guidance: %v, %q", names, cfg.instructionText)
 	}
@@ -89,7 +89,7 @@ func TestWorkspaceInstructionsWebAndMetadata(t *testing.T) {
 		t.Fatalf("clear returned %d", code)
 	}
 	cfg.instructionRequest = instructionSettings{}
-	if sources, err := cfg.prepareInstructions(root); err != nil || len(sources) != 3 || sources[0].Name != "Built-in default" {
+	if sources, err := cfg.prepareInstructions(root); err != nil || len(sources) != 4 || sources[1].Name != "Built-in default" {
 		t.Fatal("clearing settings did not restore the built-in default")
 	}
 }

@@ -78,3 +78,29 @@ func TestWebProfileSettingsSaveAndConflict(t *testing.T) {
 		t.Fatal("unrelated settings or the default prompt were lost")
 	}
 }
+
+func TestProfileDraftShowsEffectivePromptsAndProjectGraphs(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PIPKIN_CONFIG", config)
+	if err := os.WriteFile(config, []byte(`{"provider_profiles":{"local":{"provider":"vllm","model":"local"},"hosted":{"provider":"openai","model":"fixture","system_prompt":"Custom prompt"}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	draft, revision, err := profileDraft()
+	var settings profileSettings
+	if err != nil || json.Unmarshal([]byte(draft), &settings) != nil {
+		t.Fatalf("invalid profile draft: %v", err)
+	}
+	if settings.AgentProfile != "project" || settings.SystemPrompt == "" ||
+		settings.ProviderProfiles["local"].SystemPrompt == "" || settings.ProviderProfiles["hosted"].SystemPrompt != "Custom prompt" {
+		t.Fatalf("provider defaults or overrides missing: %+v", settings.ProviderProfiles)
+	}
+	for _, project := range projectProfiles {
+		graph := settings.AgentProfiles["project:"+project.ID]
+		if graph.PlanFocus == "" || graph.SystemPrompt == "" || graph.Runner != "auto" {
+			t.Errorf("missing editable graph defaults for %s", project.ID)
+		}
+	}
+	if err := saveProfileDraft(draft, revision); err != nil {
+		t.Fatal(err)
+	}
+}

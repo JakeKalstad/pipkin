@@ -20,6 +20,7 @@ import (
 var agentGraphScript string
 
 type AgentProfile struct {
+	PlanFocus          string `json:"plan_focus,omitempty"`
 	VerificationFocus  string `json:"verification_focus,omitempty"`
 	SystemPrompt       string `json:"system_prompt,omitempty"`
 	Runner             string `json:"runner"`
@@ -38,7 +39,7 @@ func (c Config) activeAgentProfile() (string, AgentProfile, error) {
 		name = "builtin"
 	}
 	profile, err := c.agentProfileByName(name)
-	return name, profile, err
+	return name, c.resolveProjectRunner(profile), err
 }
 
 func (c Config) agentProfileByName(name string) (AgentProfile, error) {
@@ -60,7 +61,7 @@ func (c Config) agentProfileByName(name string) (AgentProfile, error) {
 		if profile.Runner != "builtin" || profile.ReviewPasses != 1 {
 			return AgentProfile{}, errors.New("builtin requires runner builtin and one review pass")
 		}
-	} else if profile.Runner != "langgraph" && !(strings.HasPrefix(name, "project:") && profile.Runner == "builtin") {
+	} else if profile.Runner != "langgraph" && !(strings.HasPrefix(name, "project:") && (profile.Runner == "builtin" || profile.Runner == "auto")) {
 		return AgentProfile{}, fmt.Errorf("agent profile %q must set runner to langgraph", name)
 	}
 	if profile.ReviewPasses < 1 || profile.ReviewPasses > 3 {
@@ -106,13 +107,13 @@ func listAgentProfiles(w io.Writer, cfg Config) error {
 	return nil
 }
 
-func runAgentGraph(ctx context.Context, python string, passes int, verify bool, stage func(string) (bool, error)) error {
+func runAgentGraph(ctx context.Context, python string, passes int, verify, plan bool, stage func(string) (bool, error)) error {
 	if python == "" {
 		python = "python3"
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, python, "-u", "-c", agentGraphScript, strconv.Itoa(passes), strconv.FormatBool(verify))
+	cmd := exec.CommandContext(ctx, python, "-u", "-c", agentGraphScript, strconv.Itoa(passes), strconv.FormatBool(verify), strconv.FormatBool(plan))
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdin, err := cmd.StdinPipe()
@@ -127,18 +128,23 @@ func runAgentGraph(ctx context.Context, python string, passes int, verify bool, 
 		return fmt.Errorf("start LangGraph: %w", err)
 	}
 	scanner := bufio.NewScanner(stdout)
+	stages := []string{"draft"}
+	if plan {
+		stages = []string{"plan", "draft"}
+	}
+	for i := 0; i < passes; i++ {
+		name := "review"
+		if verify && i == passes-1 {
+			name = "verify"
+		}
+		stages = append(stages, name)
+	}
 	count := 0
 	var stageErr error
 	finished := false
 	for scanner.Scan() {
 		var message struct{ Stage string }
-		expected := "review"
-		if count == 0 {
-			expected = "draft"
-		} else if verify && count == passes {
-			expected = "verify"
-		}
-		if err := json.Unmarshal(scanner.Bytes(), &message); err != nil || message.Stage != expected || count > passes || finished {
+		if err := json.Unmarshal(scanner.Bytes(), &message); err != nil || count >= len(stages) || message.Stage != stages[count] || finished {
 			stageErr = errors.New("LangGraph returned an unexpected stage")
 			break
 		}
@@ -172,7 +178,7 @@ func runAgentGraph(ctx context.Context, python string, passes int, verify bool, 
 	if waitErr != nil {
 		return fmt.Errorf("LangGraph runner: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
 	}
-	if count != passes+1 && !finished {
+	if count != len(stages) && !finished {
 		return errors.New("LangGraph exited before finishing the delivery")
 	}
 	return nil

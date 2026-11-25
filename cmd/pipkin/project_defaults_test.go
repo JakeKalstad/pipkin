@@ -49,11 +49,11 @@ func TestProjectDefaultsCoverage(t *testing.T) {
 			if python != "" {
 				stages := []string{}
 				verify := agent.VerificationFocus != ""
-				err := runAgentGraph(context.Background(), python, agent.ReviewPasses, verify, func(stage string) (bool, error) {
+				err := runAgentGraph(context.Background(), python, agent.ReviewPasses, verify, true, func(stage string) (bool, error) {
 					stages = append(stages, stage)
 					return false, nil
 				})
-				want := []string{"draft", "review"}
+				want := []string{"plan", "draft", "review"}
 				if verify {
 					want = append(want, "verify")
 				}
@@ -95,7 +95,7 @@ func TestResearchDeliveryUsesProjectVerification(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "findings.md"), []byte("Original findings"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	focuses := []string{"Structure findings around the question", "Audit each material claim", "Check evidence provenance"}
+	focuses := []string{"PLANNING FOCUS:", "Planning notes (advisory", "Audit each material claim", "Check evidence provenance"}
 	requests := make(chan string, 8)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var input struct{ Messages []chatMessage }
