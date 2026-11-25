@@ -776,6 +776,37 @@ func selectedTextContext(original *zip.ReadCloser, budget int, omitted *[]string
 	return src.String(), included, nil
 }
 
+func decodeChanges(content string) (Changes, error) {
+	content = strings.TrimSpace(content)
+	content = strings.TrimPrefix(content, "```json")
+	content = strings.TrimPrefix(content, "```")
+	content = strings.TrimSuffix(content, "```")
+	var changes Changes
+	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &changes); err != nil {
+		return changes, fmt.Errorf("invalid changes JSON: %w", err)
+	}
+	if changes.Changes == nil {
+		return changes, errors.New("missing changes array")
+	}
+	return changes, nil
+}
+
+func saveEditResponseText(output, first, retry string, cause error) error {
+	f, err := os.CreateTemp(filepath.Dir(output), "model-response-*.txt")
+	if err != nil {
+		return errors.Join(cause, fmt.Errorf("save model response: %w", err))
+	}
+	_, err = fmt.Fprintln(f, "First model reply:\n"+first)
+	if err == nil && retry != "" {
+		_, err = fmt.Fprintln(f, "\nRetry reply:\n"+retry)
+	}
+	if err := errors.Join(err, f.Close()); err != nil {
+		_ = os.Remove(f.Name())
+		return errors.Join(cause, fmt.Errorf("save model response: %w", err))
+	}
+	return fmt.Errorf("%w. Model response saved to %s", cause, f.Name())
+}
+
 func sendOpenAI(ctx context.Context, cfg Config, root, input, output, prompt string, omitted *[]string, job *WorkflowJob) error {
 	original, e := zip.OpenReader(input)
 	if e != nil {
@@ -792,16 +823,21 @@ func sendOpenAI(ctx context.Context, cfg Config, root, input, output, prompt str
 	if err != nil {
 		return err
 	}
-	content = strings.TrimSpace(content)
-	content = strings.TrimPrefix(content, "```json")
-	content = strings.TrimPrefix(content, "```")
-	content = strings.TrimSuffix(content, "```")
-	var changes Changes
-	if e := json.Unmarshal([]byte(strings.TrimSpace(content)), &changes); e != nil {
-		return fmt.Errorf("LLM did not return valid changes JSON: %w", e)
-	}
-	if changes.Changes == nil {
-		return errors.New("LLM response must contain a changes array (use [] when no edits are needed)")
+	changes, err := decodeChanges(content)
+	if err != nil {
+		first := content
+		emit(ctx, workflowEvent{Type: "status", Message: "Model reply did not match the edit format. Retrying once."})
+		retrySystem := cfg.withInstructions(system) + `
+
+Return exactly one JSON object with a "changes" array. If no edits are warranted, return {"changes":[]}. Do not include an explanation or any surrounding text.`
+		content, err = chatCompletion(ctx, cfg, retrySystem, user, job)
+		if err != nil {
+			return saveEditResponseText(output, first, "", fmt.Errorf("retry after invalid edit response: %w", err))
+		}
+		changes, err = decodeChanges(content)
+		if err != nil {
+			return saveEditResponseText(output, first, content, fmt.Errorf("%s / %s did not return edit JSON after two attempts. For a prose answer, use Free Prompt (f): %w", cfg.Provider, cfg.Model, err))
+		}
 	}
 	// Repackage the *selected archive* without altering any original files.
 	archived := map[string]bool{}

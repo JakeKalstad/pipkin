@@ -39,7 +39,8 @@ input[type=search]{flex:1 1 160px}label{overflow-wrap:anywhere}button:focus-visi
 </section>
 {{else if .Profiles}}
 <section class="card"><h1>Profiles</h1>
-<p class="meta">Active delivery profile: <code>{{.AgentProfile}}</code></p>
+<p class="meta">Active delivery profile <code>{{.AgentProfile}}</code>{{if .AgentRunner}} · Runner <code>{{.AgentRunner}}</code>{{end}}</p>
+{{if .AgentStages}}<details><summary>Active workflow stages</summary><ol>{{range .AgentStages}}<li><code>{{.Name}}</code>{{if .Focus}}<p>{{.Focus}}</p>{{end}}</li>{{end}}</ol></details>{{end}}
 <p class="meta">The editor includes the effective system prompts and all project presets. Set <code>"agent_profile": "project"</code> to select a preset from the workspace’s project type. In each preset, <code>plan_focus</code>, <code>draft_focus</code>, <code>review_focus</code>, and <code>verification_focus</code> set the guidance for the individual stages.</p>
 <p class="meta">Set <code>"editor": "vscodium"</code> to open terminal edits in VSCodium across workspaces, or use <code>"auto"</code> to follow <code>VISUAL</code> and <code>EDITOR</code>.</p>
 {{if .ProfileRevision}}<form method="post" action="/profiles">

@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -20,6 +19,7 @@ import (
 var agentGraphScript string
 
 type AgentProfile struct {
+	SecondAuditFocus   string `json:"second_audit_focus,omitempty"`
 	PlanFocus          string `json:"plan_focus,omitempty"`
 	VerificationFocus  string `json:"verification_focus,omitempty"`
 	SystemPrompt       string `json:"system_prompt,omitempty"`
@@ -107,13 +107,21 @@ func listAgentProfiles(w io.Writer, cfg Config) error {
 	return nil
 }
 
-func runAgentGraph(ctx context.Context, python string, passes int, verify, plan bool, stage func(string) (bool, error)) error {
+func runAgentGraph(ctx context.Context, python string, stages []deliveryStage, stage func(deliveryStage) (bool, error)) error {
 	if python == "" {
 		python = "python3"
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, python, "-u", "-c", agentGraphScript, strconv.Itoa(passes), strconv.FormatBool(verify), strconv.FormatBool(plan))
+	names := make([]string, 0, len(stages))
+	for _, item := range stages {
+		names = append(names, item.Name)
+	}
+	encoded, err := json.Marshal(names)
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, python, "-u", "-c", agentGraphScript, string(encoded))
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdin, err := cmd.StdinPipe()
@@ -128,36 +136,24 @@ func runAgentGraph(ctx context.Context, python string, passes int, verify, plan 
 		return fmt.Errorf("start LangGraph: %w", err)
 	}
 	scanner := bufio.NewScanner(stdout)
-	stages := []string{"draft"}
-	if plan {
-		stages = []string{"plan", "draft"}
-	}
-	for i := 0; i < passes; i++ {
-		name := "review"
-		if verify && i == passes-1 {
-			name = "verify"
-		}
-		stages = append(stages, name)
-	}
 	count := 0
 	var stageErr error
-	finished := false
 	for scanner.Scan() {
 		var message struct{ Stage string }
-		if err := json.Unmarshal(scanner.Bytes(), &message); err != nil || count >= len(stages) || message.Stage != stages[count] || finished {
+		if err := json.Unmarshal(scanner.Bytes(), &message); err != nil || count >= len(stages) || message.Stage != stages[count].Name {
 			stageErr = errors.New("LangGraph returned an unexpected stage")
 			break
 		}
-		stop, err := stage(message.Stage)
+		stop, err := stage(stages[count])
 		if err != nil {
 			stageErr = err
 			break
 		}
 		count++
 		reply := "ok\n"
-		if stop {
+		if stop && count < len(stages)-1 {
 			reply = "stop\n"
-			finished = true
+			count = len(stages) - 1
 		}
 		if _, err := io.WriteString(stdin, reply); err != nil {
 			stageErr = err
@@ -178,7 +174,7 @@ func runAgentGraph(ctx context.Context, python string, passes int, verify, plan 
 	if waitErr != nil {
 		return fmt.Errorf("LangGraph runner: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
 	}
-	if count != len(stages) && !finished {
+	if count != len(stages) {
 		return errors.New("LangGraph exited before finishing the delivery")
 	}
 	return nil

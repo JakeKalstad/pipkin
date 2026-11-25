@@ -28,7 +28,8 @@ var projectProfiles = []projectProfile{
 	{"software", "Existing software", "Work through normal entry points. Preserve compatibility and data, and check the changed behavior with focused regression coverage.", "# Software project\n\nDocument setup, build, test, and deployment commands.\n"},
 	{"software-new", "New software", "Define a small first milestone and a runnable entry point. Choose the stack from the user's constraints. Include a minimal check and document how to run it.", "# New software project\n\n## Goal\n\n## First runnable milestone\n\n## Setup and checks\n"},
 	{"research", "Research", "State the research question and scope. Track each claim with its source, date, method, and uncertainty. Distinguish evidence, interpretation, and open questions. Record enough detail to reproduce calculations.", "# Research project\n\n## Question\n\n## Sources and evidence\n\n## Method\n\n## Open questions\n"},
-	{"pitch", "Grant, marketing, seed, or sales package", "Identify the audience, decision, and submission constraints. Lead with the problem, evidence, proposed outcome, and specific ask. Label assumptions and projections. Check claims, numbers, and eligibility against the supplied material.", "# Pitch or application\n\n## Audience and decision\n\n## Problem and evidence\n\n## Proposal and ask\n\n## Deadlines and requirements\n"},
+	{"pitch", "Marketing, seed, or sales package", "Identify the audience, decision, and submission constraints. Lead with the problem, evidence, proposed outcome, and specific ask. Label assumptions and projections. Check claims, numbers, and eligibility against the supplied material.", "# Pitch or application\n\n## Audience and decision\n\n## Problem and evidence\n\n## Proposal and ask\n\n## Deadlines and requirements\n"},
+	{"grants", "Grants", "Trace eligibility, rubric, submission requirements, and budget rules to the solicitation. Verify totals, commitments, milestones, and attachments. Flag missing evidence and preserve the funder’s terminology.", "# Grant application\n\n## Solicitation and rubric\n\n## Eligibility and evidence\n\n## Budget and milestones\n\n## Submission checklist\n"},
 	{"job-search", "Job search", "Compare roles against location eligibility, remote policy, compensation, and industry constraints. Record the source, date, and application status. Tailor materials to verified experience and flag gaps without inventing qualifications.", "# Job search\n\n## Role and location filters\n\n## Compensation and exclusions\n\n## Opportunities\n\n## Follow-ups\n"},
 }
 
@@ -69,7 +70,8 @@ func detectProject(root string) string {
 		profile string
 	}{
 		{[]string{"job-search", "job-hunt", "applications"}, "job-search"},
-		{[]string{"grant", "pitch", "fundraise", "marketing", "sales"}, "pitch"},
+		{[]string{"grant", "grants", "grant-application"}, "grants"},
+		{[]string{"pitch", "fundraise", "marketing", "sales"}, "pitch"},
 		{[]string{"research", "literature-review", "study"}, "research"},
 	} {
 		for _, term := range hint.terms {

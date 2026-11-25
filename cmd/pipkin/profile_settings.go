@@ -135,7 +135,7 @@ func validateProfileSettings(settings profileSettings) error {
 		}
 	}
 	for name, profile := range settings.AgentProfiles {
-		if strings.TrimSpace(name) == "" || !validPrompt(profile.SystemPrompt) || !validPrompt(profile.VerificationFocus) || !validPrompt(profile.PlanFocus) {
+		if strings.TrimSpace(name) == "" || !validPrompt(profile.SystemPrompt) || !validPrompt(profile.VerificationFocus) || !validPrompt(profile.PlanFocus) || !validPrompt(profile.SecondAuditFocus) {
 			return fmt.Errorf("invalid name or system prompt in agent profile %q", name)
 		}
 		if _, err := cfg.agentProfileByName(name); err != nil {

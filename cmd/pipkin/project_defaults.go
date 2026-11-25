@@ -23,31 +23,37 @@ var defaultsByProject = map[string]projectDefaults{
 		ReviewFocus: "Check completeness, usability, and unsupported assumptions.",
 	}},
 	"software": {"software-maintenance", AgentProfile{
-		ReviewPasses: 2, ReviewContextBytes: 8192,
+		ReviewPasses: 3, ReviewContextBytes: 8192,
 		DraftFocus:        "Trace the normal entry point and preserve existing callers and data.",
 		ReviewFocus:       "Check behavioral regressions, compatibility, retries, and error paths.",
 		VerificationFocus: "Check whether the proposed targeted tests exercise the changed behavior and catch the identified regression.",
 	}},
 	"software-new": {"software-bootstrap", AgentProfile{
-		ReviewPasses: 2, ReviewContextBytes: 4096,
+		ReviewPasses: 3, ReviewContextBytes: 4096,
 		DraftFocus:        "Build a minimal runnable milestone with a smoke check.",
 		ReviewFocus:       "Reason through a clean checkout, setup, normal run, and failure path.",
 		VerificationFocus: "Check that dependency, configuration, and run instructions are complete and agree with the supplied implementation.",
 	}},
 	"research": {"research-evidence", AgentProfile{
-		ReviewPasses: 2, ReviewContextBytes: 8192,
+		ReviewPasses: 3, ReviewContextBytes: 8192,
 		DraftFocus:        "Structure findings around the question and include an evidence trail.",
 		ReviewFocus:       "Audit each material claim against its cited source and check calculations.",
 		VerificationFocus: "Check evidence provenance, uncertainty, conflicting findings, and scope of conclusions.",
 	}},
 	"pitch": {"pitch-package", AgentProfile{
-		ReviewPasses: 2, ReviewContextBytes: 4096,
+		ReviewPasses: 3, ReviewContextBytes: 4096,
 		DraftFocus:        "Write for the recipient's decision and make the ask explicit and supportable.",
 		ReviewFocus:       "Check substantiation, consistent figures, format, and submission requirements.",
 		VerificationFocus: "Read as the intended recipient and check that the decision, evidence, and next action are clear.",
 	}},
+	"grants": {"grant-application", AgentProfile{
+		ReviewPasses: 3, ReviewContextBytes: 8192,
+		DraftFocus:        "Write against the funder’s rubric. Align the need, method, milestones, outcome measures, and itemized budget. Label missing applicant or funder information.",
+		ReviewFocus:       "Check eligibility, required sections, scoring criteria, page limits, and citations against the supplied solicitation.",
+		VerificationFocus: "Audit the final package against the submission checklist. Verify totals, attachments, dates and time zones, matching funds, and unsupported commitments.",
+	}},
 	"job-search": {"job-search", AgentProfile{
-		ReviewPasses: 2, ReviewContextBytes: 4096,
+		ReviewPasses: 3, ReviewContextBytes: 4096,
 		DraftFocus:        "Apply hard filters first and use verified experience to explain fit.",
 		ReviewFocus:       "Check eligibility, exclusions, dates, role status, and claims in application material.",
 		VerificationFocus: "Check that uncertain details stay marked as unknown and every tailored claim matches verified experience.",
@@ -179,7 +185,8 @@ func defaultProjectAgent(id string) AgentProfile {
 	profile.Runner = "auto"
 	project, _ := profileByID(id)
 	profile.SystemPrompt = defaultAgentSystemPrompt + "\n\nProject scope: " + project.Guidance
-	profile.PlanFocus = "Identify acceptance criteria, affected resources, and verification steps. " + profile.DraftFocus
+	profile.PlanFocus = projectGraphs[id].PlanFocus
+	profile.SecondAuditFocus = projectGraphs[id].SecondAuditFocus
 	return profile
 }
 

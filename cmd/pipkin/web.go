@@ -85,6 +85,8 @@ type webPage struct {
 	AgenticSelected                              bool
 	DraftProvider                                string
 	AgentProfile                                 string
+	AgentStages                                  []deliveryStage
+	AgentRunner                                  string
 	Approved, Rejected, Pending, Applied         int
 	ReadyToCopy                                  int
 	Provider, Model, ActiveProvider, Stage       string
@@ -305,7 +307,14 @@ func webHandlerForRoot(root string) http.Handler {
 			})
 		}
 		sort.Slice(page.Providers, func(i, j int) bool { return page.Providers[i].Name < page.Providers[j].Name })
-		page.AgentProfile, _, _ = cfg.deliveryAgentProfile(root)
+		agentName, agent, agentErr := cfg.deliveryAgentProfile(root)
+		if agentErr == nil {
+			page.AgentProfile = agentName
+			if page.Profiles {
+				page.AgentStages = deliveryStages(agentName, agent)
+				page.AgentRunner = agent.Runner
+			}
+		}
 		if page.HTTPStatus != 0 {
 			w.WriteHeader(page.HTTPStatus)
 		}

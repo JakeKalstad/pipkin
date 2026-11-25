@@ -121,3 +121,58 @@ func TestConfigModelEnvironmentOverride(t *testing.T) {
 		t.Fatalf("model: %q", got)
 	}
 }
+
+func TestEditResponseRetriesProse(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PIPKIN_TEST_KEY", "dummy")
+	if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	input := filepath.Join(t.TempDir(), "input.zip")
+	if err := writeZip(root, []*Node{{rel: "note.txt"}}, input); err != nil {
+		t.Fatal(err)
+	}
+	for _, reply := range []string{`{"changes":[]}`, "Because this is prose again"} {
+		t.Run(reply, func(t *testing.T) {
+			requests := make(chan struct{}, 3)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				content := reply
+				if len(requests) == 0 {
+					content = "Based on your request, here is my recommendation."
+				}
+				requests <- struct{}{}
+				fmt.Fprintf(w, `{"choices":[{"message":{"content":%q}}]}`, content)
+			}))
+			defer srv.Close()
+			out := filepath.Join(t.TempDir(), "out.zip")
+			cfg := Config{Provider: "openai", BaseURL: srv.URL, Model: "test", APIKeyEnv: "PIPKIN_TEST_KEY", MaxContextBytes: 100000}
+			err := sendOpenAI(context.Background(), cfg, root, input, out, "Edit the note", nil, nil)
+			if len(requests) != 2 {
+				t.Fatalf("expected exactly two model calls, got %d", len(requests))
+			}
+			if json.Valid([]byte(reply)) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := validateZipStrict(out); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err == nil || !strings.Contains(err.Error(), "Free Prompt (f)") {
+					t.Fatalf("missing actionable error: %v", err)
+				}
+				if _, err := os.Stat(out); !os.IsNotExist(err) {
+					t.Fatalf("invalid response produced an archive: %v", err)
+				}
+				dumps, globErr := filepath.Glob(filepath.Join(filepath.Dir(out), "model-response-*.txt"))
+				if globErr != nil || len(dumps) != 1 || !strings.Contains(err.Error(), dumps[0]) {
+					t.Fatalf("missing response dump: %v (%v)", dumps, globErr)
+				}
+				dump, readErr := os.ReadFile(dumps[0])
+				if readErr != nil || !strings.Contains(string(dump), "Based on your request") || !strings.Contains(string(dump), reply) {
+					t.Fatalf("incomplete response dump: %q (%v)", dump, readErr)
+				}
+			}
+		})
+	}
+}
