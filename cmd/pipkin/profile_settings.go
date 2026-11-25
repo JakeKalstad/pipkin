@@ -15,8 +15,9 @@ import (
 
 const maxProfileConfigBytes = 512 << 10
 
-// Keep this editor scoped to profiles. Unrelated config entries are merged from disk.
+// Expose profiles and the global editor preference while preserving unrelated config.
 type profileSettings struct {
+	Editor           string                     `json:"editor"`
 	ProviderProfile  string                     `json:"provider_profile"`
 	ProviderProfiles map[string]ProviderProfile `json:"provider_profiles"`
 	AgentProfile     string                     `json:"agent_profile"`
@@ -66,6 +67,9 @@ func profileDraft() (string, string, error) {
 }
 
 func validateProfileSettings(settings profileSettings) error {
+	if _, err := configuredEditor(settings.Editor); err != nil {
+		return err
+	}
 	validPrompt := func(prompt string) bool {
 		return len(prompt) <= maxInstructionBytes && utf8.ValidString(prompt) && !strings.ContainsRune(prompt, 0)
 	}

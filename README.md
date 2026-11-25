@@ -400,7 +400,7 @@ Pipkin loads project guidance by default for text and hosted archive deliveries 
 
 Store reusable Agent Skills as `.agents/skills/<skill-name>/SKILL.md`. Pipkin lists these skills and sends their Markdown when you enable them. Use **Instructions** in the web UI to create or edit either format and to enable or disable skills. The browser editor supplies starter text, including `name` and `description` front matter for a new skill. The text is saved directly in the workspace and can be checked into Git.
 
-In the terminal, press `I` to open the instruction picker. Press Enter to edit, `n` to start a new skill, or Space to toggle a skill. Editing uses `VISUAL`, then `EDITOR`, then `vi`. Save and exit the editor to return to the instruction list. A new skill starts disabled and is highlighted immediately, even when you keep the starter template. Press Space to enable it.
+In the terminal, press `I` to open the instruction picker. Press Enter to edit, `n` to start a new skill, or Space to toggle a skill. Editing uses the [configured editor](#default-editor). Save and exit the editor to return to the instruction list. A new skill starts disabled and is highlighted immediately, even when you keep the starter template. Press Space to enable it.
 
 You can still add a workspace system prompt, extra Markdown paths, or per-delivery guidance. Instructions are loaded independently of ZIP selection. Pipkin reads skill Markdown as guidance. Skill scripts, references, and assets are not discovered or executed automatically. **Help** documents the interfaces, and **About** displays build and provider details.
 
@@ -414,6 +414,12 @@ The workspace prompt comes first, followed by root `AGENTS.md`, saved Markdown p
 Pipkin sends the same instructions for the initial draft, subsequent reviews, and hosted-to-text fallback. The provider receives the guidance in the system instructions alongside Pipkin's format and tool constraints. Text providers deduct custom guidance from the available file-context budget. Custom system guidance is supported by text and hosted archive providers. The legacy multipart transport and editor snippets use their existing interfaces.
 
 Saved guidance is scoped to the workspace's resolved path and shared by Pipkin clients using the same `PIPKIN_OUTPUT_DIR`. Review records include source names and SHA-256 fingerprints. Reusing a delivery loads the current workspace guidance. Re-enter any one-off guidance you still need. If Langfuse request-content capture is enabled, captured provider inputs can include the guidance.
+
+### Default editor
+
+Set `"editor": "vscodium"` in `~/.config/pipkin/config.json` (or the file named by `PIPKIN_CONFIG`). The same setting is available in **Profiles**, or by pressing `m` then `e` in the terminal. It applies across workspaces to terminal edits of text files, instructions, and profile settings.
+
+Pipkin runs `codium --wait`. With `codium` on your PATH, save and close the edited tab to return to Pipkin and apply the edit. Set `"editor": "auto"` or leave the setting blank to use `VISUAL`, then `EDITOR`, then `vi`.
 
 ### Free prompt
 
@@ -671,7 +677,7 @@ On wide terminals, the file picker shares the screen with Parcel, recent ZIPs, a
 | `W` / `D` / `O` | Work with the highlighted CSV or XLSX / export MkDocs / open the latest output folder |
 | `?` / `q` | Help / quit |
 
-Press **Enter** or `v` on a highlighted file for a read-only preview of UTF-8 text up to 256 KiB. Use the arrow keys or `j`/`k` to scroll and `q` or Esc to return to the picker. Enter opens directories. Press `e` in the picker or text preview to open a file in `VISUAL`, `EDITOR`, or `vi`. Saving applies the edit locally. Press `W` or `e` on a spreadsheet to open its grid and save a separate copy.
+Press **Enter** or `v` on a highlighted file for a read-only preview of UTF-8 text up to 256 KiB. Use the arrow keys or `j`/`k` to scroll and `q` or Esc to return to the picker. Enter opens directories. Press `e` in the picker or text preview to open a file in the [configured editor](#default-editor). Saving applies the edit locally. Press `W` or `e` on a spreadsheet to open its grid and save a separate copy.
 
 Click **Open output folder** in a terminal that supports OSC 8 file links (some terminals use Ctrl+click). Recent archive and job names also link to their folders. Press uppercase `O` to open the latest successful output in the system file manager, or the configured outputs directory before the first save.
 

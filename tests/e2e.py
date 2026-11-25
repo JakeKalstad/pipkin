@@ -340,10 +340,15 @@ class PipkinEndToEnd(unittest.TestCase):
         self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
 
     def test_terminal_edits_text_from_preview(self):
-        editor = self.project.parent / "test-editor"
-        editor.write_text('#!/bin/sh\nprintf "Manual edit\\n" > "$1"\n')
+        editor = self.project.parent / "codium"
+        editor.write_text('#!/bin/sh\n[ "$#" -eq 2 ] && [ "$1" = "--wait" ] || exit 1\nprintf "Manual edit\\n" > "$2"\n')
         editor.chmod(0o700)
-        self.env["VISUAL"] = str(editor)
+        self.env["PATH"] = str(editor.parent) + os.pathsep + self.env["PATH"]
+        self.env["VISUAL"] = "/unused/fallback-editor"
+        config = Path(self.env["PIPKIN_CONFIG"])
+        settings = json.loads(config.read_text())
+        settings["editor"] = "vscodium"
+        config.write_text(json.dumps(settings))
         terminal = Terminal(self.start)
         self.addCleanup(terminal.close)
         terminal.expect("e Edit")

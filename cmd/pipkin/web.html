@@ -39,7 +39,8 @@ input[type=search]{flex:1 1 160px}label{overflow-wrap:anywhere}button:focus-visi
 </section>
 {{else if .Profiles}}
 <section class="card"><h1>Profiles</h1>
-<p class="meta">Edit the default system prompt, named provider profiles, or agent profiles. Add <code>system_prompt</code> to a profile to supply its system guidance. Environment overrides still apply.</p>
+<p class="meta">Edit the default system prompt, named provider profiles, or agent profiles. Add <code>system_prompt</code> to a profile to supply its system guidance. Environment profile overrides still apply.</p>
+<p class="meta">Set <code>"editor": "vscodium"</code> to open terminal edits in VSCodium across workspaces, or use <code>"auto"</code> to follow <code>VISUAL</code> and <code>EDITOR</code>.</p>
 {{if .ProfileRevision}}<form method="post" action="/profiles">
 <input type="hidden" name="csrf" value="{{.Token}}"><input type="hidden" name="revision" value="{{.ProfileRevision}}">
 <label for="profile-settings">Profile settings (JSON)</label>

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -298,6 +299,40 @@ func editInstructionInTerminal(root, rel string, restore func()) (bool, error) {
 	return err == nil, err
 }
 
+func configuredEditor(name string) ([]string, error) {
+	switch name {
+	case "", "auto":
+		return nil, nil
+	case "vscodium":
+		return []string{"codium", "--wait"}, nil
+	default:
+		return nil, fmt.Errorf("unknown editor %q (use auto or vscodium)", name)
+	}
+}
+
+func terminalEditor() ([]string, error) {
+	data, err := readProfileConfig(configPath())
+	if err != nil {
+		return nil, err
+	}
+	var settings struct {
+		Editor string `json:"editor"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return nil, err
+	}
+	editor, err := configuredEditor(settings.Editor)
+	if err != nil || len(editor) > 0 {
+		return editor, err
+	}
+	for _, name := range []string{"VISUAL", "EDITOR"} {
+		if command := strings.Fields(os.Getenv(name)); len(command) > 0 {
+			return command, nil
+		}
+	}
+	return []string{"vi"}, nil
+}
+
 func editTerminalDocument(root, pattern, draft string, limit int, restore func()) ([]byte, error) {
 	f, err := os.CreateTemp("", "pipkin-"+pattern)
 	if err != nil {
@@ -308,14 +343,14 @@ func editTerminalDocument(root, pattern, draft string, limit int, restore func()
 	if err = errors.Join(err, f.Close()); err != nil {
 		return nil, err
 	}
-	editor := strings.Fields(os.Getenv("VISUAL"))
-	if len(editor) == 0 {
-		editor = strings.Fields(os.Getenv("EDITOR"))
-	}
-	if len(editor) == 0 {
-		editor = []string{"vi"}
+	editor, err := terminalEditor()
+	if err != nil {
+		return nil, err
 	}
 	cmd := exec.Command(editor[0], append(editor[1:], f.Name())...)
+	if cmd.Err != nil {
+		return nil, fmt.Errorf("launch editor %q: %w", editor[0], cmd.Err)
+	}
 	cmd.Dir, cmd.Stdin, cmd.Stdout, cmd.Stderr = root, os.Stdin, os.Stdout, os.Stderr
 	restore()
 	err = cmd.Run()
