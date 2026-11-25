@@ -1107,11 +1107,18 @@ func main() {
 	workbook := flag.String("workbook", "", "inspect a workspace-relative .xlsx workbook")
 	workbookEdits := flag.String("workbook-edits", "", "JSON cell edit manifest for --workbook")
 	workbookOutput := flag.String("workbook-output", "", "new workspace-relative .xlsx copy for edited cells")
+	listProjectProfiles := flag.Bool("project-profiles", false, "list available project profile IDs")
 	projectMode := flag.Bool("project", false, "show project profile and source")
 	projectType := flag.String("project-profile", "", "save a workspace profile")
 	initialProject := flag.String("init-project", "", "initialise a repository with the chosen profile")
 	showVersion := flag.Bool("version", false, "print build version")
 	flag.Parse()
+	if *listProjectProfiles {
+		for _, profile := range projectProfiles {
+			fmt.Printf("%-14s %s\n", profile.ID, profile.Label)
+		}
+		return
+	}
 	if *showVersion {
 		fmt.Println("Pipkin " + buildMetadata().Version)
 		return
@@ -1465,6 +1472,7 @@ func main() {
 				"",
 				"I      Edit AGENTS.md and Agent Skills",
 				"J      Choose a project profile or initialise a repository",
+				"       List profile IDs with pipkin --project-profiles.",
 				"W      Inspect or edit the highlighted .xlsx workbook",
 				"O      Open the latest output folder in your file manager",
 				"D      Generate a MkDocs ZIP from the selected files",

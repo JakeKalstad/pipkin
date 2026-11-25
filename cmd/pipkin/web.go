@@ -287,6 +287,9 @@ func webHandlerForRoot(root string) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 		page.Token = token
+		if page.Help {
+			page.ProjectProfiles = projectProfiles
+		}
 		cfg := loadConfig()
 		page.Links = configuredLinks(cfg)
 		page.AgenticAvailable = cfg.supportsAgentic()

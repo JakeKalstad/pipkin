@@ -1,8 +1,8 @@
 # Pipkin
 
-**Understand, update, and maintain large codebases with local models and reviewable diffs.**
+**Work on software, research, and documents with local or hosted models.**
 
-Pipkin is an open-source tool for working on a large repository one focused task at a time. Select a file, directory, or snippet, then ask a model running locally through vLLM to explain it or propose a change. A hosted model is an option when you need one.
+Pipkin is an open-source workspace tool for focused AI tasks. Choose the files a model should see, ask a question or request a change, and review proposed edits before applying them. Start a research workspace, keep a conversation going, or turn selected files into a ready-to-serve MkDocs site.
 
 <p align="center">
   <img src="images/logo.svg" alt="Parcel, the Pipkin otter" width="96">
@@ -18,6 +18,20 @@ Yes, this does involve reading a diff. We appreciate your patience with this leg
 
 
 ![Pipkin landing screen](images/landing.png)
+
+## Choose a workflow
+
+| I want to… | Start here |
+| --- | --- |
+| Edit code or text files and review the diff | [Day-to-day workflow](#day-to-day-workflow) |
+| Start a research, software, pitch, or job-search workspace | [Project profiles](#project-profiles) |
+| Ask a question without attaching files and resume it later | [Free prompt](#free-prompt) |
+| Give the model project rules or reusable skills | [System instructions and Markdown sources](#system-instructions-and-markdown-sources) |
+| Turn project files into a documentation or research site | [Export an MkDocs site](#export-an-mkdocs-site) |
+| Preview a spreadsheet or edit cells in a copy | [XLSX workbooks](#xlsx-workbooks) |
+| Connect another tool | [HTTP API](#web-http-api) or [MCP](#mcp) |
+
+From an installed binary, run `pipkin .` for the terminal picker. To open the browser interface, set `LISTEN_URL=http://127.0.0.1:8787` and run `pipkin --web .`. Choose a [provider profile](#switch-between-model-providers) before sending a model request. Workspace files and saved history live locally. The selected provider determines where inference runs.
 
 ## Day-to-day workflow
 
@@ -413,9 +427,19 @@ For MCP, call `pipkin_prompt` with an absolute `root`, a `prompt`, and the optio
 
 Open **Project** in the web UI or press `J` in the TUI. Pipkin checks the workspace root for software manifests and source files. Other project guesses can use recognizable directory names. Ambiguous workspaces use General. The initial profile is recorded in `.pipkin-project.json` on interactive startup, and an explicit selection replaces the guess.
 
-Choose **Existing software**, **New software**, **Research**, **Grant, marketing, seed, or sales package**, or **Job search**. The selected profile contributes guidance alongside `AGENTS.md` and workspace instructions. Initialisation creates a local Git repository when needed and writes a profile-specific starter README if one is absent. It leaves existing README files intact.
+| Profile ID | Project type |
+| --- | --- |
+| `general` | General |
+| `software` | Existing software |
+| `software-new` | New software |
+| `research` | Research |
+| `pitch` | Grant, marketing, seed, or sales package |
+| `job-search` | Job search |
+
+The selected profile contributes guidance alongside `AGENTS.md` and workspace instructions. Initialisation creates a local Git repository when needed and writes a profile-specific starter README if one is absent. It leaves existing README files intact.
 
 ```sh
+pipkin --project-profiles
 pipkin --project .
 pipkin --project-profile research .
 pipkin --init-project pitch ./seed-round
@@ -474,7 +498,10 @@ Start with `pipkin --web` and the loopback `LISTEN_URL` shown above. These endpo
 | `GET /git` | Optional `path`, `local=1`, `diff=upstream\|working\|commit`, `commit` (full object ID) | Show scoped Git history or a read-only patch. |
 | `GET /help` and `GET /about` | — | Show setup, usage, API and MCP references or application metadata. |
 | `GET /prompt` | Optional `conversation` | Open conversation history or a saved transcript. |
-| `POST /prompt` | `prompt`, optional `provider_profile`, `system_prompt`, repeated `instruction_files` | Return a text response in HTML or JSON. Validation or provider errors return 422. |
+| `POST /prompt` | `prompt`, optional `conversation`, `provider_profile`, `system_prompt`, repeated `instruction_files`. To delete, send `action=delete` and `conversation`. | Continue or create a conversation, or delete it. HTML submissions redirect. JSON submissions return the result. |
+| `GET /project`, `POST /project` | POST accepts `profile` and optional `action=init`. | Show or set the workspace profile and optionally initialise Git. |
+| `GET /workbook`, `POST /workbook` | POST accepts `file` and optional `output` and `edits` (JSON). | Preview an XLSX workbook or edit cells in a separate copy. |
+| `POST /mkdocs` | `prompt`, repeated `files`, optional `provider_profile`, `system_prompt`, repeated `instruction_files`, `show_hidden=1` | Download a ready-to-serve MkDocs ZIP. |
 | `GET /instructions` | — | Open the workspace instruction editor. |
 | `POST /instructions` | `system_prompt`, newline-separated `instruction_files`, optional `skip_project_instructions=1` | Save workspace guidance. Invalid guidance returns 422. |
 | `GET /instructions/edit` | `path` or new `skill` name | Open or scaffold a standard Markdown file. |
@@ -498,9 +525,12 @@ Configure your MCP client to launch the local stdio server. Use the full path to
 
 | Tool | Required arguments | Result |
 | --- | --- | --- |
-| `pipkin_prompt` | `root`, `prompt` | Returns `reply` without attachments or a delivery. |
+| `pipkin_prompt` | `root`, `prompt` | Returns `reply` and `conversation`. Pass an existing conversation ID to continue it. |
 | `pipkin_conversations` | `root`, `action` | List, read, or delete saved conversations. |
 | `pipkin_instructions` | `root`, `action` | Lists or manages `AGENTS.md` and discovered skills. |
+| `pipkin_project` | `root`, `action` | Show, set, or initialise the project profile. Set and init require `profile`. |
+| `pipkin_workbook` | `root`, `file` | Preview an XLSX workbook or edit it when `output` and `edits` are supplied. |
+| `pipkin_mkdocs` | `root`, `paths`, `prompt` | Generate an MkDocs site and return its ZIP path and any omitted context files. |
 | `pipkin_pack` | `root`, `paths` | Creates a ZIP and returns its path and file count. |
 | `pipkin_submit` | `root`, `paths`, `prompt` | Sends the selection and returns `job` and `result`. Accepts optional `agentic` (boolean), `system_prompt` (string), and `instruction_files` (array of strings). |
 | `pipkin_jobs` | `root` | Lists saved job directories for the project. |
@@ -609,7 +639,7 @@ Uncomment one provider block in `.env.example`. Set `PIPKIN_PROVIDER`, `PIPKIN_B
 - Use the interactive TUI to check/uncheck files, then ZIP or send a prompt.
 - In VSCodium, right-click files → **Pipkin: Send Selected Files to LLM**.
 - Review a session in **Pipkin Deliveries**, inspect native diffs and approve individual files.
-- OpenCode and Hermes can use `pipkin --mcp` with the `pipkin_pack`, `pipkin_submit`, `pipkin_jobs`, `pipkin_review`, and `pipkin_apply` tools.
+- OpenCode and Hermes can use `pipkin --mcp` with the tools in the [MCP reference](#mcp).
 - Archives and sessions default to `~/pipkin/outputs`. Override using `PIPKIN_OUTPUT_DIR`.
 
 ```sh
@@ -625,7 +655,15 @@ pipkin --git-diff ~/pipkin/outputs/jobs/PROJECT/job-ID
 
 On wide terminals, the file picker shares the screen with Parcel, recent ZIPs, and saved requests. File-edit requests are saved as reviewable sessions.
 
-**File picker:** `space` select, `z` package, `p` prompt and send, uppercase `P` start an agentic prompt with the selected provider, `r` review completed deliveries, `i` import an existing `<project>.zip` + `<project>-llm.zip` pair from the output directory, `q` quit.
+| Key | Action |
+| --- | --- |
+| Space / `s` | Toggle selection / select only the highlighted item |
+| `z` / `p` / `P` | Package a ZIP / send a file-edit request / draft and review in Agentic mode |
+| `r` / `i` | Review deliveries / import an existing input and result ZIP pair |
+| `g` / `G` / `H` | Git history for a path / repository history / toggle hidden files |
+| `f` / `J` / `I` / `m` | Free prompt history / project profile / instructions / provider profile |
+| `W` / `D` / `O` | Work with the highlighted XLSX / export MkDocs / open the latest output folder |
+| `?` / `q` | Help / quit |
 
 Click **Open output folder** in a terminal that supports OSC 8 file links (some terminals use Ctrl+click). Recent archive and job names also link to their folders. Press uppercase `O` to open the latest successful output in the system file manager, or the configured outputs directory before the first save.
 

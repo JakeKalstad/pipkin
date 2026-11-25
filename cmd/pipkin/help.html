@@ -18,6 +18,8 @@ LISTEN_URL=http://127.0.0.1:8787</pre>
   --prompt-file task.txt --instructions AGENTS.md .</pre>
 <p><code>files.json</code> is a JSON array of project-relative file or folder paths. The task goes in <code>task.txt</code>. System instructions guide the work alongside Pipkin's output and tool constraints.</p></section>
 <section class="card"><h2>Project profiles and spreadsheets</h2>
+<p>Run <code>pipkin --project-profiles</code> to list the available profiles.</p>
+<ul>{{range .ProjectProfiles}}<li><code>{{.ID}}</code> — {{.Label}}</li>{{end}}</ul>
 <p>Open <a href="/project">Project</a> or press <kbd>J</kbd> to select a profile or initialise a repository. Pipkin writes the choice to <code>.pipkin-project.json</code> and applies the profile guidance to prompts.</p>
 <p>Open <a href="/workbook">Workbook</a> to inspect an XLSX file or change cells in a separate workbook copy. In the TUI, highlight a workbook and press <kbd>W</kbd>. This feature requires <code>openpyxl&gt;=3.1</code> in Python. Set <code>PIPKIN_XLSX_PYTHON</code> to select that interpreter.</p>
 <pre>pipkin --workbook budget.xlsx --workbook-edits edits.json --workbook-output budget-reviewed.xlsx .</pre></section>
