@@ -150,6 +150,41 @@ func (a *App) sidePanel(width int) ([]string, map[int]string) {
 	}
 	return lines, links
 }
+func (a *App) shortcutRows(width int) []string {
+	work := []string{"p Prompt"}
+	if a.cfg.supportsAgentic() {
+		work = append(work, "P Agentic")
+	}
+	work = append(work, "f Free prompt", "r Review", "g/G Git")
+	groups := []struct {
+		label string
+		items []string
+	}{
+		{"Files", []string{"↑↓ Move", "←→ Folders", "Space Toggle", "s Select one", "v View", "e Edit", "W Sheet", "H Hidden"}},
+		{"Work", work},
+		{"Output", []string{"z ZIP", "D MkDocs", "i Import", "O Open folder"}},
+		{"Workspace", []string{"J Project", "I Instructions", "m Model", "? Help", "q Quit"}},
+	}
+
+	const indent = "            "
+	var rows []string
+	for _, group := range groups {
+		row := terminalPad(" "+group.label, len(indent))
+		separator := ""
+		for _, item := range group.items {
+			if utf8.RuneCountInString(row+separator+item) > width && separator != "" {
+				rows = append(rows, row)
+				row = indent
+				separator = ""
+			}
+			row += separator + item
+			separator = " · "
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
 func (a *App) render() {
 	h, w := size()
 	rightWidth := 0
@@ -164,43 +199,26 @@ func (a *App) render() {
 		screenHeight--
 	}
 	screenHeight-- // Output folder link
-	rows := max(1, screenHeight-7)
+	model := a.cfg.Provider + " / " + a.cfg.Model
+	if a.cfg.ProviderProfile != "" {
+		model = a.cfg.ProviderProfile + " · " + model
+	}
+	lines := []string{" PIPKIN  " + model + "  ·  " + a.cwd}
+	shortcuts := a.shortcutRows(leftWidth)
+	// Keep room for the title, dividers, active file, and footer.
+	if len(shortcuts) > screenHeight-7 {
+		shortcuts = []string{" ? Help · q Quit"}
+	}
+	lines = append(lines, shortcuts...)
+	lines = append(lines, strings.Repeat("─", leftWidth))
+	headerHeight := len(lines)
+	rows := max(1, screenHeight-headerHeight-4)
 	if a.cursor < a.offset {
 		a.offset = a.cursor
 	}
 	if a.cursor >= a.offset+rows {
 		a.offset = a.cursor - rows + 1
 	}
-	shortcuts := "  ↑↓ move  ←→ expand  v View  e Edit  W Sheet  Space toggle  s Select one  z ZIP  p LLM"
-	if a.cfg.supportsAgentic() {
-		shortcuts += "  P Agentic"
-	}
-	if len(a.cfg.ProviderProfiles) > 0 {
-		shortcuts += "  m Model"
-	}
-	shortcuts += "  g/G Git  H Hidden  ? Help  J Project  I Instructions  f Free prompt  D MkDocs  r Review  i Import  q Quit"
-	if w < utf8.RuneCountInString(shortcuts) {
-		shortcuts = " ? Help  v View  e Edit  W Sheet  D MkDocs  s Select one  I Instructions  f Free prompt  J Project  Space toggle  g/G Git  H Hidden  z ZIP  p LLM"
-		if a.cfg.supportsAgentic() {
-			shortcuts = " ? Help  v View  e Edit  W Sheet  p LLM  P Agentic  D MkDocs  s Select one  I Instructions  f Free prompt  J Project  Space toggle  g/G Git  H Hidden  z ZIP"
-		}
-		if len(a.cfg.ProviderProfiles) > 0 {
-			shortcuts = " m Model " + shortcuts
-		}
-		shortcuts += "  r Review  q Quit"
-	}
-	// The shortcut bar spans the terminal so the sidebar cannot clip it.
-	model := a.cfg.Provider + " / " + a.cfg.Model
-	if a.cfg.ProviderProfile != "" {
-		model = a.cfg.ProviderProfile + " · " + model
-	}
-	header := []string{
-		" PIPKIN  " + model + "  ·  " + a.cwd,
-		shortcuts,
-		strings.Repeat("─", max(0, leftWidth)),
-	}
-	var lines []string
-	lines = append(lines, header...)
 	for i := a.offset; i < len(a.visible) && i < a.offset+rows; i++ {
 		n := a.visible[i]
 		check := "[ ]"
@@ -225,7 +243,7 @@ func (a *App) render() {
 		}
 		lines = append(lines, trunc(s, max(0, leftWidth)))
 	}
-	for len(lines) < rows+3 {
+	for len(lines) < rows+headerHeight {
 		lines = append(lines, "")
 	}
 	selected, _ := a.selectedFiles()
@@ -276,7 +294,7 @@ func (a *App) render() {
 		if i < len(lines) {
 			l = lines[i]
 		}
-		if rightWidth == 0 || i == 1 {
+		if rightWidth == 0 {
 			out.WriteString(terminalLink(trunc(l, w), outputLinks[i]))
 		} else {
 			r := ""
@@ -311,31 +329,31 @@ func max(a, b int) int {
 	return b
 }
 
-func (a *App) chooseProvider(reader *bufio.Reader) {
-	names := make([]string, 0, len(a.cfg.ProviderProfiles))
-	for name := range a.cfg.ProviderProfiles {
+func (a *App) chooseProvider(reader *bufio.Reader, restore func()) {
+	profiles := loadConfig().ProviderProfiles
+	names := make([]string, 0, len(profiles))
+	for name := range profiles {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	if len(names) == 0 {
-		a.status = "Add provider profiles to config.json to switch models"
-		return
-	}
 	index, matched := slices.BinarySearch(names, a.cfg.ProviderProfile)
 	if !matched {
 		index = 0
 	}
 	for {
 		height, _ := size()
-		lines := []string{" PIPKIN / MODEL", " ↑↓ choose  Enter select  Esc back"}
+		lines := []string{" PIPKIN / MODEL", " ↑↓ choose  Enter select  e Edit profiles  Esc back"}
 		start := max(0, index-max(1, height-3)+1)
 		for i := start; i < len(names) && len(lines) < height; i++ {
 			prefix := "  "
 			if i == index {
 				prefix = "> "
 			}
-			profile := a.cfg.ProviderProfiles[names[i]]
+			profile := profiles[names[i]]
 			lines = append(lines, safeDisplayLine(prefix+names[i]+"  ·  "+profile.Provider+" / "+profile.Model))
+		}
+		if len(names) == 0 {
+			lines = append(lines, " No named provider profiles. Press e to add one.")
 		}
 		screenLines(lines)
 		switch readKey(reader) {
@@ -344,8 +362,31 @@ func (a *App) chooseProvider(reader *bufio.Reader) {
 		case "up", "k":
 			index = max(0, index-1)
 		case "down", "j":
-			index = min(len(names)-1, index+1)
+			index = min(max(0, len(names)-1), index+1)
+		case "e":
+			if status := a.editProfiles(reader, restore); status != "" {
+				a.status = status
+				cfg := loadConfig()
+				if a.providerChoice != "" {
+					if _, ok := cfg.ProviderProfiles[a.providerChoice]; ok {
+						cfg = loadProviderConfig(a.providerChoice)
+					} else {
+						a.providerChoice = ""
+						a.status += " · using the default provider"
+					}
+				}
+				if cfg.configError != nil {
+					a.status = safeDisplayLine(cfg.configError.Error())
+					return
+				}
+				cfg.instructionRequest = a.cfg.instructionRequest
+				a.cfg = cfg
+			}
+			return
 		case "enter":
+			if len(names) == 0 {
+				continue
+			}
 			cfg := loadProviderConfig(names[index])
 			if cfg.configError != nil {
 				a.status = cfg.configError.Error()
@@ -353,6 +394,7 @@ func (a *App) chooseProvider(reader *bufio.Reader) {
 			}
 			cfg.instructionRequest = a.cfg.instructionRequest
 			a.cfg = cfg
+			a.providerChoice = cfg.ProviderProfile
 			a.status = "Selected " + cfg.ProviderProfile + " for this session"
 			return
 		}

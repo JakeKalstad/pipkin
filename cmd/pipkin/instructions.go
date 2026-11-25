@@ -121,7 +121,9 @@ func readInstructionFile(root, rel string) (string, error) {
 	return string(data), err
 }
 
-func resolveInstructions(root string, saved, request instructionSettings) (string, []instructionSource, error) {
+type profileGuidance struct{ label, prompt string }
+
+func resolveInstructions(root string, saved, request instructionSettings, profiles ...profileGuidance) (string, []instructionSource, error) {
 	if len(saved.Files)+len(request.Files) > maxInstructionFiles {
 		return "", nil, fmt.Errorf("use at most %d instruction files per delivery", maxInstructionFiles)
 	}
@@ -144,6 +146,11 @@ func resolveInstructions(root string, saved, request instructionSettings) (strin
 		}
 		sources = append(sources, instructionSource{Name: name, SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(body)))})
 		return nil
+	}
+	for _, profile := range profiles {
+		if err := add(profile.label, profile.prompt); err != nil {
+			return "", nil, err
+		}
 	}
 	if err := add("Workspace system prompt", saved.SystemPrompt); err != nil {
 		return "", nil, err
@@ -188,7 +195,7 @@ func resolveInstructions(root string, saved, request instructionSettings) (strin
 	return result.String(), sources, nil
 }
 
-func (c *Config) prepareInstructions(root string) ([]instructionSource, error) {
+func (c *Config) prepareInstructions(root string, extra ...profileGuidance) ([]instructionSource, error) {
 	settings, err := loadInstructionSettings(root)
 	if err != nil {
 		return nil, err
@@ -196,7 +203,8 @@ func (c *Config) prepareInstructions(root string) ([]instructionSource, error) {
 	if !c.supportsAgentic() {
 		settings.SkipProjectInstructions = true
 	}
-	guidance, sources, err := resolveInstructions(root, settings, c.instructionRequest)
+	profiles := append([]profileGuidance{{"Provider system prompt", c.SystemPrompt}}, extra...)
+	guidance, sources, err := resolveInstructions(root, settings, c.instructionRequest, profiles...)
 	if err != nil {
 		return nil, err
 	}

@@ -283,6 +283,14 @@ class PipkinEndToEnd(unittest.TestCase):
         terminal.expect("Ctrl+S send")
         terminal.send("First line\rSecond line\x13")
         terminal.expect("Standalone answer")
+        terminal.send("\x06")
+        terminal.expect("PIPKIN / CONTEXT FILES")
+        terminal.expect("alpha.txt")
+        terminal.send(" \r")
+        terminal.expect("1 context files for this message")
+        terminal.send("Explain the file\x13")
+        terminal.expect("Waiting for test-model")
+        terminal.expect("Standalone answer")
         terminal.send("\x1b")
         terminal.expect("PIPKIN / FREE PROMPT HISTORY")
         terminal.expect("First line Second line")
@@ -293,6 +301,8 @@ class PipkinEndToEnd(unittest.TestCase):
         terminal.send("qq")
         self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
         self.assertEqual(requests[0]["messages"][-1]["content"], "First line\nSecond line")
+        attachment = requests[1]["messages"][-1]["content"].splitlines()[-1]
+        self.assertEqual(json.loads(attachment), {"path": "alpha.txt", "text": ORIGINAL["alpha.txt"]})
         self.assertFalse((self.output / "jobs").exists())
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "requires xdg-open")
@@ -305,6 +315,7 @@ class PipkinEndToEnd(unittest.TestCase):
         self.env["PIPKIN_TEST_OPENED"] = str(captured)
         terminal = Terminal(self.start)
         self.addCleanup(terminal.close)
+        terminal.expect("O Open folder")
         terminal.expect("O Open output folder")
         terminal.send("z")
         terminal.expect("Saved:")
@@ -518,7 +529,7 @@ class PipkinEndToEnd(unittest.TestCase):
         config.write_text(json.dumps({"provider": "vllm", "model": "local-model"}))
         terminal = Terminal(self.start)
         self.addCleanup(terminal.close)
-        terminal.expect("p LLM  P Agentic")
+        terminal.expect("p Prompt · P Agentic")
         terminal.send("P")
         terminal.expect("Agentic prompt (Enter send, Esc cancel)")
         terminal.send("\x07q")
@@ -552,6 +563,17 @@ class PipkinEndToEnd(unittest.TestCase):
                 "beta": {"provider": "vllm", "model": "beta-model"},
             },
         }))
+        editor = self.project.parent / "edit-profiles"
+        editor.write_text(
+            f"#!{sys.executable}\n"
+            "import json, pathlib, sys\n"
+            "path = pathlib.Path(sys.argv[1])\n"
+            "settings = json.loads(path.read_text())\n"
+            "settings['provider_profiles']['beta']['system_prompt'] = 'Beta guidance'\n"
+            "path.write_text(json.dumps(settings))\n"
+        )
+        editor.chmod(0o700)
+        self.env["VISUAL"] = str(editor)
         terminal = Terminal(self.start)
         self.addCleanup(terminal.close)
         terminal.expect("m Model")
@@ -565,6 +587,13 @@ class PipkinEndToEnd(unittest.TestCase):
         terminal.expect("ñ")
         terminal.send("\x1b")
         terminal.expect("cancelled")
+        terminal.send("m")
+        terminal.expect("e Edit profiles")
+        terminal.send("e")
+        terminal.expect("Profiles saved")
+        settings = json.loads(config.read_text())
+        self.assertEqual(settings["provider_profile"], "alpha")
+        self.assertEqual(settings["provider_profiles"]["beta"]["system_prompt"], "Beta guidance")
         terminal.send("q")
         self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
 

@@ -101,10 +101,14 @@ func listConversations(dir string) ([]conversationSummary, error) {
 // Keep the read/check/write sequence atomic across web, terminal and MCP
 // processes. The lock is held only for local mutations, never a model call.
 func lockConversations(dir string, change func() error) error {
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	return withFileLock(filepath.Join(dir, "lock"), change)
+}
+
+func withFileLock(path string, change func() error) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_CREATE|os.O_RDWR, 0600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return err
 	}
@@ -158,7 +162,7 @@ func saveConversation(dir string, thread conversation, previous int) error {
 	})
 }
 
-func sendConversation(ctx context.Context, root, id, prompt string, cfg Config) (conversation, string, error) {
+func sendConversation(ctx context.Context, root, id, prompt string, cfg Config, files ...*Node) (conversation, string, error) {
 	dir, err := conversationDirectory(root)
 	if err != nil {
 		return conversation{}, "", err
@@ -182,7 +186,7 @@ func sendConversation(ctx context.Context, root, id, prompt string, cfg Config) 
 		}
 	}
 	previous := len(thread.Messages)
-	reply, err := freePrompt(ctx, root, prompt, cfg, thread.Messages)
+	reply, err := freePrompt(ctx, root, prompt, cfg, thread.Messages, files...)
 	if err != nil {
 		return thread, "", err
 	}

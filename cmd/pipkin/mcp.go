@@ -69,8 +69,8 @@ func mcpTools() []map[string]any {
 					"kind": map[string]any{"type": "string", "enum": []string{"value", "formula"}}},
 				"required": []string{"cell", "value"}}},
 		}, "root", "file"),
-		mcpTool("pipkin_prompt", "Send a text-only prompt using workspace instructions. Returns the response without creating a delivery or attaching project files", map[string]any{
-			"root": root, "prompt": text, "system_prompt": text, "instruction_files": instructionFiles, "provider_profile": text, "conversation": text,
+		mcpTool("pipkin_prompt", "Send a text-only prompt using workspace instructions. Optionally attach explicitly selected workspace text files as reference context. Returns the response without creating a delivery", map[string]any{
+			"root": root, "prompt": text, "system_prompt": text, "instruction_files": instructionFiles, "provider_profile": text, "conversation": text, "paths": paths,
 		}, "root", "prompt"),
 		mcpTool("pipkin_conversations", "List, read, or delete saved free-prompt conversations. Confirm deletion with the user", map[string]any{
 			"root":         root,
@@ -203,7 +203,11 @@ func mcpCallTool(call mcpCall) (any, error) {
 		}
 		cfg := loadProviderConfig(a.ProviderProfile)
 		cfg.instructionRequest = instructionSettings{SystemPrompt: a.SystemPrompt, Files: a.InstructionFiles}
-		thread, reply, err := sendConversation(context.Background(), root, a.Conversation, a.Prompt, cfg)
+		files := make([]*Node, 0, len(a.Paths))
+		for _, path := range a.Paths {
+			files = append(files, &Node{rel: path})
+		}
+		thread, reply, err := sendConversation(context.Background(), root, a.Conversation, a.Prompt, cfg, files...)
 		return map[string]string{"reply": reply, "conversation": thread.ID}, err
 	case "pipkin_pack", "pipkin_submit":
 		root, err := mcpProject(a.Root)

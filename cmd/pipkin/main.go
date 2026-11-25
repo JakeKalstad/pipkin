@@ -25,6 +25,8 @@ import (
 )
 
 type ProviderProfile struct {
+	SystemPrompt    string `json:"system_prompt,omitempty"`
+	MaxContextBytes int    `json:"max_context_bytes,omitempty"`
 	Provider        string `json:"provider"`
 	BaseURL         string `json:"base_url,omitempty"`
 	Model           string `json:"model"`
@@ -33,6 +35,7 @@ type ProviderProfile struct {
 }
 
 type Config struct {
+	SystemPrompt       string                     `json:"system_prompt,omitempty"`
 	ProviderProfile    string                     `json:"provider_profile,omitempty"`
 	ProviderProfiles   map[string]ProviderProfile `json:"provider_profiles,omitempty"`
 	MaxOutputTokens    int                        `json:"max_output_tokens,omitempty"`
@@ -72,6 +75,7 @@ type App struct {
 	agentic        bool
 	mkdocsExport   bool
 	cfg            Config
+	providerChoice string
 	spinnerFrame   int
 	spinnerMessage string
 	traceStatus    string
@@ -232,6 +236,10 @@ func loadProviderConfig(selectedProfile string) Config {
 		}
 		c.Provider, c.BaseURL, c.Model, c.APIKeyEnv = profile.Provider, profile.BaseURL, profile.Model, profile.APIKeyEnv
 		c.MaxOutputTokens = profile.MaxOutputTokens
+		c.SystemPrompt = profile.SystemPrompt
+		if profile.MaxContextBytes > 0 {
+			c.MaxContextBytes = profile.MaxContextBytes
+		}
 	} else {
 		if provider := strings.TrimSpace(os.Getenv("PIPKIN_PROVIDER")); provider != "" && provider != c.Provider {
 			if c.Provider != "" || provider != "openai" {
@@ -1442,7 +1450,7 @@ func main() {
 				recalc(n)
 			}
 		case "f":
-			a.freePromptTUI(reader)
+			a.freePromptTUI(reader, restore)
 		case "O":
 			target := a.lastOutput
 			if target == "" {
@@ -1497,7 +1505,8 @@ func main() {
 				"W      Inspect or edit the highlighted CSV or XLSX file",
 				"O      Open the latest output folder in your file manager",
 				"D      Generate a MkDocs ZIP from the selected files",
-				"f      Send a free prompt without selecting files",
+				"f      Free prompt with optional file context (Ctrl+F in the composer)",
+				"m      Choose a provider or press e to edit profile settings",
 				"",
 				"Setup and usage",
 				"Configure your provider in ~/.config/pipkin/.env.",
@@ -1541,7 +1550,7 @@ func main() {
 				a.recentAt = time.Time{}
 			}
 		case "m":
-			a.chooseProvider(reader)
+			a.chooseProvider(reader, restore)
 		case "r":
 			if e := a.reviewTUI(reader); e != nil {
 				a.status = "Review: " + e.Error()

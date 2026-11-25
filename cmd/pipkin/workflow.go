@@ -584,7 +584,15 @@ func workflowSendConfigured(ctx context.Context, root string, files []*Node, pro
 	if agentic && !cfg.supportsAgentic() {
 		return errors.New("agentic mode requires a text or hosted archive provider")
 	}
-	sources, err := cfg.prepareInstructions(root)
+	var guidance []profileGuidance
+	if agentic {
+		_, profile, err := cfg.activeAgentProfile()
+		if err != nil {
+			return err
+		}
+		guidance = append(guidance, profileGuidance{"Agent system prompt", profile.SystemPrompt})
+	}
+	sources, err := cfg.prepareInstructions(root, guidance...)
 	if err != nil {
 		return err
 	}

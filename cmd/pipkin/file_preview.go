@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,21 +17,30 @@ func (a *App) readPickerText(node *Node) ([]byte, os.FileInfo, error) {
 	if node == nil || node.dir {
 		return nil, nil, errors.New("highlight a file to preview")
 	}
-	rel := filepath.ToSlash(node.rel)
-	if !safeRel(rel) || filepath.ToSlash(filepath.Clean(rel)) != rel || !hiddenPathAllowed(rel, a.showHidden) {
+	data, info, err := readWorkspaceText(a.cwd, filepath.ToSlash(node.rel), a.showHidden, maxPreviewBytes)
+	if errors.Is(err, errNonTextFile) && strings.EqualFold(filepath.Ext(node.rel), ".xlsx") {
+		err = errors.New("press W to preview this workbook")
+	}
+	return data, info, err
+}
+
+var errNonTextFile = errors.New("file must contain UTF-8 text")
+
+func readWorkspaceText(root, rel string, showHidden bool, limit int) ([]byte, os.FileInfo, error) {
+	if !safeRel(rel) || filepath.ToSlash(filepath.Clean(rel)) != rel || !hiddenPathAllowed(rel, showHidden) {
 		return nil, nil, errors.New("file is outside the picker scope")
 	}
-	info, err := statSelectedPath(a.cwd, node.rel)
+	info, err := statSelectedPath(root, rel)
 	if err != nil {
 		return nil, nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, nil, errors.New("preview requires a regular file")
+		return nil, nil, errors.New("requires a regular file")
 	}
-	if info.Size() > maxPreviewBytes {
-		return nil, nil, errors.New("file exceeds the 256 KiB preview limit")
+	if info.Size() > int64(limit) {
+		return nil, nil, fmt.Errorf("file exceeds the %d-byte limit", limit)
 	}
-	file, err := os.Open(filepath.Join(a.cwd, node.rel))
+	file, err := os.Open(filepath.Join(root, rel))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -40,17 +50,14 @@ func (a *App) readPickerText(node *Node) ([]byte, os.FileInfo, error) {
 		return nil, nil, err
 	}
 	if !os.SameFile(info, opened) {
-		return nil, nil, errors.New("file changed while opening preview")
+		return nil, nil, errors.New("file changed while opening")
 	}
-	data, err := readLimited(file, maxPreviewBytes)
+	data, err := readLimited(file, limit)
 	if err != nil {
 		return nil, nil, err
 	}
 	if !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
-		if strings.EqualFold(filepath.Ext(rel), ".xlsx") {
-			return nil, nil, errors.New("press W to preview this workbook")
-		}
-		return nil, nil, errors.New("preview supports UTF-8 text files")
+		return nil, nil, errNonTextFile
 	}
 	return data, opened, nil
 }

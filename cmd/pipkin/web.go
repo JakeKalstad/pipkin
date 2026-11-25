@@ -60,6 +60,9 @@ type webPage struct {
 	Conversation                           conversation
 
 	FreePrompt                                   bool
+	Profiles                                     bool
+	ProfileDraft, ProfileRevision                string
+	ContextSelected                              bool
 	PromptSystem                                 string
 	SkillPaths                                   []string
 	InstructionPath, InstructionDraft            string
@@ -390,8 +393,45 @@ func webHandlerForRoot(root string) http.Handler {
 		}
 		render(w, page)
 	})
+	mux.HandleFunc("/profiles", func(w http.ResponseWriter, r *http.Request) {
+		page := webPage{Title: "Profiles", Root: root, Profiles: true}
+		if r.Method == http.MethodGet {
+			var err error
+			page.ProfileDraft, page.ProfileRevision, err = profileDraft()
+			if err != nil {
+				page.Error = err.Error()
+			} else if r.URL.Query().Get("saved") == "1" {
+				page.Notice = "Profiles saved."
+			}
+			render(w, page)
+			return
+		}
+		if !protected(w, r) {
+			return
+		}
+		page.ProfileDraft, page.ProfileRevision = r.PostForm.Get("profiles"), r.PostForm.Get("revision")
+		if err := saveProfileDraft(page.ProfileDraft, page.ProfileRevision); err != nil {
+			page.HTTPStatus, page.Error = http.StatusUnprocessableEntity, err.Error()
+			render(w, page)
+			return
+		}
+		http.Redirect(w, r, "/profiles?saved=1", http.StatusSeeOther)
+	})
 	mux.HandleFunc("/prompt", func(w http.ResponseWriter, r *http.Request) {
 		page := webPage{Title: "Free prompt", Root: root, FreePrompt: true}
+		loadFiles := func(paths []string) {
+			dirs, err := buildWebDirTree("", root)
+			if err != nil {
+				page.Error = err.Error()
+				return
+			}
+			selected := make(map[string]string, len(paths))
+			for _, path := range paths {
+				selected[path] = ""
+			}
+			selectWebDraft(dirs, selected)
+			page.Dirs, page.ContextSelected = dirs, len(selected) > 0
+		}
 		jsonResponse := strings.Contains(r.Header.Get("Accept"), "application/json")
 		write := func(status int, payload any) {
 			w.Header().Set("Content-Type", "application/json")
@@ -435,6 +475,7 @@ func webHandlerForRoot(root string) http.Handler {
 				write(http.StatusOK, page.Conversations)
 				return
 			}
+			loadFiles(nil)
 			render(w, page)
 			return
 		}
@@ -464,8 +505,16 @@ func webHandlerForRoot(root string) http.Handler {
 		page.PromptSystem = r.PostForm.Get("system_prompt")
 		cfg := loadProviderConfig(page.DraftProvider)
 		cfg.instructionRequest = instructionSettings{SystemPrompt: page.PromptSystem, Files: r.PostForm["instruction_files"]}
-		thread, reply, err := sendConversation(r.Context(), root, id, page.Prompt, cfg)
+		paths := r.PostForm["files"]
+		files := make([]*Node, 0, len(paths))
+		for _, path := range paths {
+			files = append(files, &Node{rel: path})
+		}
+		thread, reply, err := sendConversation(r.Context(), root, id, page.Prompt, cfg, files...)
 		if err != nil {
+			if !jsonResponse {
+				loadFiles(paths)
+			}
 			page.Conversations, _ = listConversations(dir)
 			if id != "" {
 				page.Conversation, _ = readConversation(dir, id)

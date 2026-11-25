@@ -25,7 +25,7 @@ Yes, this does involve reading a diff. We appreciate your patience with this leg
 | --- | --- |
 | Edit code or text files and review the diff | [Day-to-day workflow](#day-to-day-workflow) |
 | Start a research, software, pitch, or job-search workspace | [Project profiles](#project-profiles) |
-| Ask a question without attaching files and resume it later | [Free prompt](#free-prompt) |
+| Ask a question with optional file context and resume it later | [Free prompt](#free-prompt) |
 | Give the model project rules or reusable skills | [System instructions and Markdown sources](#system-instructions-and-markdown-sources) |
 | Turn project files into a documentation or research site | [Export an MkDocs site](#export-an-mkdocs-site) |
 | Preview a spreadsheet or edit cells in a copy | [CSV and XLSX spreadsheets](#csv-and-xlsx-spreadsheets) |
@@ -252,6 +252,8 @@ Configure the providers you use once, then switch by profile name. The examples 
 
 ### 1. Create or update your provider profiles
 
+Open **Profiles** in the web header, or press `m` then `e` in the terminal. The editor saves named provider and agent profiles, their configured defaults, and the default provider's system prompt. Named providers can set `system_prompt`, `max_context_bytes`, and `max_output_tokens` alongside the model and endpoint. Agent profiles can set `system_prompt` for both draft and review in addition to their existing focus and review settings. Workspace guidance remains editable under **Instructions**. Use `api_key_env` to name a credential environment variable. Environment and CLI profile overrides still apply.
+
 Create the directory if needed:
 
 ```sh
@@ -417,11 +419,13 @@ Saved guidance is scoped to the workspace's resolved path and shared by Pipkin c
 
 Press `f` in the terminal or choose **Free prompt** in the web header. In the TUI history, Enter opens a conversation, `n` starts a new one, and `d` followed by uppercase `Y` deletes it. Inside the composer, Enter adds a line, Ctrl+S sends, Ctrl+T opens the scrollable transcript, and Esc returns to history. In the browser, use the **Conversations** sidebar to open, start, or delete a conversation.
 
+Use **Choose context files** in the web composer or Ctrl+F in the terminal composer to attach workspace text files. In the terminal file list, Space toggles each file and `p` copies the main picker's selection. Ctrl+P opens the model and profile menu. Context is opt-in for each message, limited by the selected provider's context budget and 256 KiB per file. Pipkin reads the files at send time and leaves their contents out of the local conversation transcript.
+
 Successful exchanges are saved locally per workspace and sorted by recent activity. The next model call includes the latest complete turns that fit the context budget. The saved transcript keeps earlier turns. Free prompts use workspace guidance and create no ZIP delivery.
 
 For HTTP, use `GET /prompt` for history or `GET /prompt?conversation=ID` for a transcript. POST an optional `conversation` field to continue a thread or omit it to start one. Use `action=delete` and the conversation ID to delete. POST uses URL-encoded fields and the form's CSRF token. HTML submissions redirect to the conversation, while `Accept: application/json` returns `{"reply":"...","conversation":"ID"}`. JSON GET requests return the history or transcript.
 
-For MCP, call `pipkin_prompt` with an absolute `root`, a `prompt`, and the optional `conversation` ID. Use `pipkin_conversations` with `root` and `action` (`list`, `read`, or `delete`). Read and delete also require `conversation`. HTTP and MCP prompt submissions accept optional `provider_profile`, `system_prompt`, and `instruction_files` (repeated form fields over HTTP, an array over MCP).
+For MCP, call `pipkin_prompt` with an absolute `root`, a `prompt`, and the optional `conversation` ID. Use `pipkin_conversations` with `root` and `action` (`list`, `read`, or `delete`). Read and delete also require `conversation`. HTTP and MCP prompt submissions accept optional `provider_profile`, `system_prompt`, and `instruction_files` (repeated form fields over HTTP, an array over MCP). Send optional context paths as repeated `files` form fields or as `paths` to the MCP `pipkin_prompt` tool.
 
 ### Project profiles
 
@@ -500,7 +504,7 @@ Start with `pipkin --web` and the loopback `LISTEN_URL` shown above. These endpo
 | `GET /git` | Optional `path`, `local=1`, `diff=upstream\|working\|commit`, `commit` (full object ID) | Show scoped Git history or a read-only patch. |
 | `GET /help` and `GET /about` | — | Show setup, usage, API and MCP references or application metadata. |
 | `GET /prompt` | Optional `conversation` | Open conversation history or a saved transcript. |
-| `POST /prompt` | `prompt`, optional `conversation`, `provider_profile`, `system_prompt`, repeated `instruction_files`. To delete, send `action=delete` and `conversation`. | Continue or create a conversation, or delete it. HTML submissions redirect. JSON submissions return the result. |
+| `POST /prompt` | `prompt`, optional `conversation`, `provider_profile`, `system_prompt`, repeated `instruction_files` and `files`. To delete, send `action=delete` and `conversation`. | Continue or create a conversation, or delete it. HTML submissions redirect. JSON submissions return the result. |
 | `GET /project`, `POST /project` | POST accepts `profile` and optional `action=init`. | Show or set the workspace profile and optionally initialise Git. |
 | `GET /workbook`, `POST /workbook` | POST accepts `file` and optional `output` and `edits` (JSON). | Preview a CSV or XLSX spreadsheet or edit cells in a separate copy. |
 | `POST /mkdocs` | `prompt`, repeated `files`, optional `provider_profile`, `system_prompt`, repeated `instruction_files`, `show_hidden=1` | Download a ready-to-serve MkDocs ZIP. |

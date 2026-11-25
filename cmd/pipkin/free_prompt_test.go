@@ -23,6 +23,9 @@ func TestFreePromptHTTPAndMCP(t *testing.T) {
 	if err := saveStandardInstruction(root, "AGENTS.md", "Use targeted checks."); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "context.txt"), []byte("Reference content"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			Messages []struct{ Role, Content string }
@@ -37,8 +40,12 @@ func TestFreePromptHTTPAndMCP(t *testing.T) {
 			request.Messages[2].Role != "assistant" || request.Messages[2].Content != "<answer>") {
 			t.Errorf("follow-up missing history: %+v", request.Messages)
 		}
+		attached := strings.Contains(user.Content, "\n\nWorkspace file context") &&
+			strings.Contains(user.Content, `{"path":"context.txt","text":"Reference content"}`) &&
+			strings.Contains(system.Content, "as reference data")
+		wantAttachment := len(request.Messages) == 4 || strings.HasPrefix(user.Content, "Explain this file.")
 		if system.Role != "system" || !strings.Contains(system.Content, "Use targeted checks.") ||
-			user.Role != "user" || user.Content != "Explain this." {
+			user.Role != "user" || attached != wantAttachment || (!wantAttachment && user.Content != "Explain this.") {
 			t.Errorf("unexpected messages: %+v", request.Messages)
 		}
 		fmt.Fprint(w, `{"choices":[{"message":{"content":"<answer>"}}]}`)
@@ -51,8 +58,9 @@ func TestFreePromptHTTPAndMCP(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", "/prompt", nil))
 	token := regexp.MustCompile(`name="csrf" value="([^"]+)"`).FindStringSubmatch(w.Body.String())
-	if len(token) != 2 {
-		t.Fatal("missing prompt form")
+	if len(token) != 2 || !strings.Contains(w.Body.String(), `name="files" value="context.txt"`) ||
+		strings.Contains(w.Body.String(), `value="context.txt" checked`) {
+		t.Fatal("missing prompt form or unchecked context picker")
 	}
 	post := func(accept string, values url.Values) *httptest.ResponseRecorder {
 		values.Set("csrf", token[1])
@@ -63,13 +71,16 @@ func TestFreePromptHTTPAndMCP(t *testing.T) {
 		h.ServeHTTP(w, req)
 		return w
 	}
-	redirect := post("text/html", url.Values{"prompt": {"Explain this."}})
+	if blocked := post("application/json", url.Values{"prompt": {"Explain this."}, "files": {"../outside.txt"}}); blocked.Code != 422 {
+		t.Fatalf("outside path returned %d", blocked.Code)
+	}
+	redirect := post("text/html", url.Values{"prompt": {"Explain this file."}, "files": {"context.txt"}})
 	if redirect.Code != 303 {
 		t.Fatalf("prompt returned %d", redirect.Code)
 	}
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", redirect.Header().Get("Location"), nil))
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "&lt;answer&gt;") {
+	if w.Code != 200 || (!strings.Contains(w.Body.String(), "&lt;answer&gt;") || strings.Contains(w.Body.String(), "Reference content")) {
 		t.Fatal("saved HTML response was not escaped")
 	}
 	created := post("application/json", url.Values{"prompt": {"Explain this."}})
@@ -79,14 +90,14 @@ func TestFreePromptHTTPAndMCP(t *testing.T) {
 		t.Fatalf("JSON response: %v %v", payload, err)
 	}
 	id := payload["conversation"]
-	args, _ := json.Marshal(mcpArgs{Root: root, Conversation: id, Prompt: "Explain this."})
+	args, _ := json.Marshal(mcpArgs{Root: root, Conversation: id, Prompt: "Explain this.", Paths: []string{"context.txt"}})
 	result, err := mcpCallTool(mcpCall{Name: "pipkin_prompt", Arguments: args})
 	if err != nil || result.(map[string]string)["reply"] != "<answer>" || result.(map[string]string)["conversation"] != id {
 		t.Fatalf("MCP response: %v %v", result, err)
 	}
 	args, _ = json.Marshal(mcpArgs{Root: root, Action: "read", Conversation: id})
 	result, err = mcpCallTool(mcpCall{Name: "pipkin_conversations", Arguments: args})
-	if err != nil || len(result.(conversation).Messages) != 4 {
+	if err != nil || len(result.(conversation).Messages) != 4 || result.(conversation).Messages[2].Content != "Explain this." {
 		t.Fatalf("MCP transcript: %v %v", result, err)
 	}
 	deleted := post("application/json", url.Values{"action": {"delete"}, "conversation": {id}})
