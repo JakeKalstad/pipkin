@@ -99,6 +99,7 @@ func TestAgenticWorkflowReviewsDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PIPKIN_FAKE_KEY", "test")
+	t.Setenv("PIPKIN_AGENT_PROFILE", "builtin")
 	config := filepath.Join(output, "config.json")
 	t.Setenv("PIPKIN_CONFIG", config)
 	t.Setenv("LANGFUSE_BASE_URL", "")
@@ -133,7 +134,7 @@ func TestAgenticWorkflowReviewsDraft(t *testing.T) {
 	if err := json.Unmarshal(data, &job); err != nil || !job.Agentic || job.Status != "completed" || job.InputTokens != 20 {
 		t.Fatalf("unexpected saved session: %+v (%v)", job, err)
 	}
-	if len(job.Instructions) != 1 || job.Instructions[0].Name != "AGENTS.md" || strings.Contains(string(data), guidance) {
+	if len(job.Instructions) != 4 || job.Instructions[0].Name != "AGENTS.md" || strings.Contains(string(data), guidance) {
 		t.Fatalf("unexpected instruction metadata: %+v", job.Instructions)
 	}
 	review, err := workflowReview(jobDir)

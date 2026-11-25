@@ -37,14 +37,14 @@ func TestStandardInstructionsEditor(t *testing.T) {
 	}
 	cfg := Config{Provider: "vllm"}
 	sources, err := cfg.prepareInstructions(root)
-	if err != nil || len(sources) != 1 || sources[0].Name != "AGENTS.md" {
+	if err != nil || len(sources) != 3 || sources[0].Name != "AGENTS.md" {
 		t.Fatalf("defaults: %v %v", sources, err)
 	}
 	if code := post(path, "toggle", ""); code != 303 {
 		t.Fatalf("enable skill: %d", code)
 	}
 	sources, err = cfg.prepareInstructions(root)
-	if err != nil || len(sources) != 2 || sources[1].Name != path || !strings.Contains(cfg.instructionText, "Check rollback.") {
+	if err != nil || len(sources) != 4 || sources[3].Name != path || !strings.Contains(cfg.instructionText, "Check rollback.") {
 		t.Fatalf("active skill: %v %v", sources, err)
 	}
 	if code := post("../AGENTS.md", "", "invalid"); code != 422 {
@@ -73,7 +73,7 @@ func TestEffectiveProjectGuidance(t *testing.T) {
 		}
 		cfg := Config{Provider: "vllm"}
 		sources, err := cfg.prepareInstructions(root)
-		if err != nil || len(sources) != 1 || sources[0].Name != want {
+		if err != nil || len(sources) != 3 || sources[0].Name != want {
 			t.Fatalf("effective sources: %v %v", sources, err)
 		}
 		w := httptest.NewRecorder()
@@ -92,5 +92,34 @@ func TestEffectiveProjectGuidance(t *testing.T) {
 	cfg := Config{Provider: "vllm"}
 	if sources, err := cfg.prepareInstructions(root); err != nil || len(sources) != 0 {
 		t.Fatalf("opted-out source: %v %v", sources, err)
+	}
+}
+
+func TestBundledSkillOverrideAndToggle(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PIPKIN_OUTPUT_DIR", t.TempDir())
+	path := bundledSkillPath("deliverable-review")
+	draft, err := standardInstructionDraft(root, path)
+	if err != nil || !strings.Contains(draft, "name: deliverable-review") {
+		t.Fatalf("bundled draft unavailable: %v", err)
+	}
+	if err := saveStandardInstruction(root, path, "Workspace override text."); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{Provider: "vllm"}
+	check := func(active bool) {
+		t.Helper()
+		if _, err := cfg.prepareInstructions(root); err != nil ||
+			strings.Contains(cfg.instructionText, "Workspace override text.") != active ||
+			strings.Contains(cfg.instructionText, "Scoping, verification, and final handoff.") {
+			t.Fatalf("skill active=%t: %v", active, err)
+		}
+	}
+	check(true)
+	for _, active := range []bool{false, true} {
+		if err := toggleStandardSkill(root, path); err != nil {
+			t.Fatal(err)
+		}
+		check(active)
 	}
 }

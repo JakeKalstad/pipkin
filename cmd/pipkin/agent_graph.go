@@ -20,6 +20,7 @@ import (
 var agentGraphScript string
 
 type AgentProfile struct {
+	VerificationFocus  string `json:"verification_focus,omitempty"`
 	SystemPrompt       string `json:"system_prompt,omitempty"`
 	Runner             string `json:"runner"`
 	ReviewPasses       int    `json:"review_passes"`
@@ -33,7 +34,7 @@ func (c Config) activeAgentProfile() (string, AgentProfile, error) {
 	if override := strings.TrimSpace(os.Getenv("PIPKIN_AGENT_PROFILE")); override != "" {
 		name = override
 	}
-	if name == "" {
+	if name == "" || name == "project" {
 		name = "builtin"
 	}
 	profile, err := c.agentProfileByName(name)
@@ -59,11 +60,14 @@ func (c Config) agentProfileByName(name string) (AgentProfile, error) {
 		if profile.Runner != "builtin" || profile.ReviewPasses != 1 {
 			return AgentProfile{}, errors.New("builtin requires runner builtin and one review pass")
 		}
-	} else if profile.Runner != "langgraph" {
+	} else if profile.Runner != "langgraph" && !(strings.HasPrefix(name, "project:") && profile.Runner == "builtin") {
 		return AgentProfile{}, fmt.Errorf("agent profile %q must set runner to langgraph", name)
 	}
 	if profile.ReviewPasses < 1 || profile.ReviewPasses > 3 {
 		return AgentProfile{}, fmt.Errorf("agent profile %q requires 1–3 review passes", name)
+	}
+	if profile.VerificationFocus != "" && profile.ReviewPasses < 2 {
+		return AgentProfile{}, fmt.Errorf("agent profile %q requires at least two passes for verification_focus", name)
 	}
 	if profile.ReviewContextBytes < 0 || profile.ReviewContextBytes > 16384 {
 		return AgentProfile{}, fmt.Errorf("agent profile %q requires review_context_bytes between 0 and 16384", name)
@@ -72,14 +76,23 @@ func (c Config) agentProfileByName(name string) (AgentProfile, error) {
 }
 
 func listAgentProfiles(w io.Writer, cfg Config) error {
-	active, _, err := cfg.activeAgentProfile()
+	root, err := os.Getwd()
 	if err != nil {
 		return err
 	}
-	names := []string{"builtin", "focused", "thorough"}
+	active, _, err := cfg.deliveryAgentProfile(root)
+	if err != nil {
+		return err
+	}
+	names := []string{"builtin", "focused", "project", "thorough"}
 	for name := range cfg.AgentProfiles {
-		if name != "builtin" && name != "focused" && name != "thorough" {
+		if name != "builtin" && name != "focused" && name != "thorough" && name != "project" {
 			names = append(names, name)
+		}
+	}
+	if strings.HasPrefix(active, "project:") {
+		if _, custom := cfg.AgentProfiles[active]; !custom {
+			names = append(names, active)
 		}
 	}
 	sort.Strings(names)
@@ -93,13 +106,13 @@ func listAgentProfiles(w io.Writer, cfg Config) error {
 	return nil
 }
 
-func runAgentGraph(ctx context.Context, python string, passes int, stage func(string) error) error {
+func runAgentGraph(ctx context.Context, python string, passes int, verify bool, stage func(string) (bool, error)) error {
 	if python == "" {
 		python = "python3"
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, python, "-u", "-c", agentGraphScript, strconv.Itoa(passes))
+	cmd := exec.CommandContext(ctx, python, "-u", "-c", agentGraphScript, strconv.Itoa(passes), strconv.FormatBool(verify))
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdin, err := cmd.StdinPipe()
@@ -116,22 +129,31 @@ func runAgentGraph(ctx context.Context, python string, passes int, stage func(st
 	scanner := bufio.NewScanner(stdout)
 	count := 0
 	var stageErr error
+	finished := false
 	for scanner.Scan() {
 		var message struct{ Stage string }
 		expected := "review"
 		if count == 0 {
 			expected = "draft"
+		} else if verify && count == passes {
+			expected = "verify"
 		}
-		if err := json.Unmarshal(scanner.Bytes(), &message); err != nil || message.Stage != expected || count > passes {
+		if err := json.Unmarshal(scanner.Bytes(), &message); err != nil || message.Stage != expected || count > passes || finished {
 			stageErr = errors.New("LangGraph returned an unexpected stage")
 			break
 		}
-		if err := stage(message.Stage); err != nil {
+		stop, err := stage(message.Stage)
+		if err != nil {
 			stageErr = err
 			break
 		}
 		count++
-		if _, err := io.WriteString(stdin, "ok\n"); err != nil {
+		reply := "ok\n"
+		if stop {
+			reply = "stop\n"
+			finished = true
+		}
+		if _, err := io.WriteString(stdin, reply); err != nil {
 			stageErr = err
 			break
 		}
@@ -150,7 +172,7 @@ func runAgentGraph(ctx context.Context, python string, passes int, stage func(st
 	if waitErr != nil {
 		return fmt.Errorf("LangGraph runner: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
 	}
-	if count != passes+1 {
+	if count != passes+1 && !finished {
 		return errors.New("LangGraph exited before finishing the delivery")
 	}
 	return nil

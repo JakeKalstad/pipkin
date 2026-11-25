@@ -50,7 +50,7 @@ input[type=search]{flex:1 1 160px}label{overflow-wrap:anywhere}button:focus-visi
 {{else if .FreePrompt}}
 <div class="columns"><section class="card"><h1>{{if .Conversation.ID}}{{.Conversation.Title}}{{else}}Free prompt{{end}}</h1>
 {{if .Conversation.ID}}
-{{range .Conversation.Messages}}<article><h3>{{if eq .Role "user"}}You{{else}}Pipkin{{end}}</h3><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{.Content}}</pre></article>{{end}}
+{{range .Conversation.Messages}}<article><h3>{{if eq .Role "user"}}You{{else}}Pipkin{{end}}</h3><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{.Content}}</pre>{{if eq .Role "assistant"}}{{with freePromptSources .Content}}<ul>{{range .}}<li><a href="{{.}}" rel="noopener noreferrer">{{.}}</a></li>{{end}}</ul>{{end}}{{end}}</article>{{end}}
 {{end}}
 <form method="post" action="/prompt">
 <input type="hidden" name="csrf" value="{{.Token}}">
@@ -94,7 +94,11 @@ input[type=search]{flex:1 1 160px}label{overflow-wrap:anywhere}button:focus-visi
 <h2>Project guidance</h2>
 <div class="toolbar"><strong>{{.ProjectGuidanceSource}}</strong>{{if .Instructions.SkipProjectInstructions}} <span class="status">Automatic loading off</span>{{end}}<a href="/instructions/edit?path=AGENTS.md">{{if eq .ProjectGuidanceSource "Built-in default"}}Customise in AGENTS.md{{else}}Edit AGENTS.md{{end}}</a></div>
 {{if .ProjectGuidance}}<details open><summary>View project instructions</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{.ProjectGuidance}}</pre></details>{{end}}
-<h2>Skills</h2>
+<h2>Bundled skills</h2>
+<p class="meta">Project skills follow the workspace profile. For hosted web search and Python execution, add <code>"free_prompt_tools": ["web_search", "code_interpreter"]</code> to an OpenAI profile under <a href="/profiles">Profiles</a>.</p>
+{{range .BundledSkills}}<div class="toolbar"><a href="/instructions/edit?path={{.Path}}">{{.Name}}</a>
+<form method="post" action="/instructions/edit"><input type="hidden" name="csrf" value="{{$.Token}}"><input type="hidden" name="path" value="{{.Path}}"><button type="submit" class="secondary" name="action" value="toggle">{{if .Active}}Disable{{else}}Enable{{end}}</button></form></div>{{end}}
+<h2>Workspace skills</h2>
 {{range .SkillPaths}}<div class="toolbar"><a href="/instructions/edit?path={{.}}"><code>{{.}}</code></a>
 <form method="post" action="/instructions/edit"><input type="hidden" name="csrf" value="{{$.Token}}"><input type="hidden" name="path" value="{{.}}">
 <button type="submit" class="secondary" name="action" value="toggle">{{if skillActive $.Instructions.Files .}}Disable{{else}}Enable{{end}}</button></form></div>{{end}}

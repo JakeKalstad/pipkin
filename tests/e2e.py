@@ -199,6 +199,7 @@ class PipkinEndToEnd(unittest.TestCase):
         terminal.expect("I Instructions")
         terminal.send("I")
         terminal.expect("PIPKIN / INSTRUCTIONS")
+        terminal.expect("python-execution (bundled)")
         terminal.send("\r")
         terminal.expect("Saved AGENTS.md")
         self.assertIn("Use targeted tests.", (self.project / "AGENTS.md").read_text())

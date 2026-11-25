@@ -17,6 +17,7 @@ const maxProfileConfigBytes = 512 << 10
 
 // Expose profiles and the global editor preference while preserving unrelated config.
 type profileSettings struct {
+	FreePromptTools  []string                   `json:"free_prompt_tools"`
 	Editor           string                     `json:"editor"`
 	ProviderProfile  string                     `json:"provider_profile"`
 	ProviderProfiles map[string]ProviderProfile `json:"provider_profiles"`
@@ -67,6 +68,9 @@ func profileDraft() (string, string, error) {
 }
 
 func validateProfileSettings(settings profileSettings) error {
+	if err := validateFreePromptTools(settings.FreePromptTools); err != nil {
+		return err
+	}
 	if _, err := configuredEditor(settings.Editor); err != nil {
 		return err
 	}
@@ -82,6 +86,9 @@ func validateProfileSettings(settings profileSettings) error {
 		}
 	}
 	for name, profile := range settings.ProviderProfiles {
+		if err := validateFreePromptTools(profile.FreePromptTools); err != nil {
+			return fmt.Errorf("provider profile %q: %w", name, err)
+		}
 		provider := Config{Provider: profile.Provider}
 		if strings.TrimSpace(name) == "" || strings.TrimSpace(profile.Model) == "" ||
 			(!provider.supportsAgentic() && profile.Provider != "multipart") {
@@ -98,13 +105,13 @@ func validateProfileSettings(settings profileSettings) error {
 		}
 	}
 	cfg := Config{AgentProfiles: settings.AgentProfiles}
-	if settings.AgentProfile != "" {
+	if settings.AgentProfile != "" && settings.AgentProfile != "project" {
 		if _, err := cfg.agentProfileByName(settings.AgentProfile); err != nil {
 			return err
 		}
 	}
 	for name, profile := range settings.AgentProfiles {
-		if strings.TrimSpace(name) == "" || !validPrompt(profile.SystemPrompt) {
+		if strings.TrimSpace(name) == "" || !validPrompt(profile.SystemPrompt) || !validPrompt(profile.VerificationFocus) {
 			return fmt.Errorf("invalid name or system prompt in agent profile %q", name)
 		}
 		if _, err := cfg.agentProfileByName(name); err != nil {

@@ -262,7 +262,7 @@ func (a *App) render() {
 			label = " MkDocs brief (Enter export, Esc cancel):"
 		} else if a.agentic {
 			label = " Agentic prompt (Enter send, Esc cancel):"
-			if name, _, err := a.cfg.activeAgentProfile(); err == nil && name != "builtin" {
+			if name, _, err := a.cfg.deliveryAgentProfile(a.cwd); err == nil && name != "builtin" {
 				label += " " + name
 			}
 		}

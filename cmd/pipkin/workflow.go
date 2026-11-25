@@ -585,11 +585,14 @@ func workflowSendConfigured(ctx context.Context, root string, files []*Node, pro
 		return errors.New("agentic mode requires a text or hosted archive provider")
 	}
 	var guidance []profileGuidance
+	var agentName string
+	var agentProfile AgentProfile
 	if agentic {
-		_, profile, err := cfg.activeAgentProfile()
+		name, profile, err := cfg.deliveryAgentProfile(root)
 		if err != nil {
 			return err
 		}
+		agentName, agentProfile = name, profile
 		guidance = append(guidance, profileGuidance{"Agent system prompt", profile.SystemPrompt})
 	}
 	sources, err := cfg.prepareInstructions(root, guidance...)
@@ -606,6 +609,7 @@ func workflowSendConfigured(ctx context.Context, root string, files []*Node, pro
 	}
 	job := WorkflowJob{ID: filepath.Base(dir), Created: time.Now().UTC().Format(time.RFC3339), Root: root, Status: "running", Agentic: agentic, Files: map[string]string{}}
 	job.Instructions = sources
+	job.AgentProfile = agentName
 	job.Provider = cfg.Provider
 	job.ProviderProfile = cfg.ProviderProfile
 	job.Model = cfg.Model
@@ -635,7 +639,7 @@ func workflowSendConfigured(ctx context.Context, root string, files []*Node, pro
 	emit(ctx, workflowEvent{Type: "status", Message: "Sending to " + cfg.Model})
 	switch {
 	case agentic:
-		e = agenticDelivery(ctx, cfg, root, input, result, prompt, &job)
+		e = runAgenticDelivery(ctx, cfg, root, input, result, prompt, agentProfile, &job)
 	case cfg.hostedArchive(false):
 		e = openAIArchive(ctx, cfg, input, result, prompt, &job)
 	case cfg.Provider == "multipart":
@@ -695,13 +699,18 @@ func workflowSendConfigured(ctx context.Context, root string, files []*Node, pro
 	return e
 }
 func agenticDelivery(ctx context.Context, cfg Config, root, input, result, prompt string, job *WorkflowJob) error {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
-	defer cancel()
 	name, profile, err := cfg.activeAgentProfile()
 	if err != nil {
 		return err
 	}
 	job.AgentProfile = name
+	return runAgenticDelivery(ctx, cfg, root, input, result, prompt, profile, job)
+}
+
+func runAgenticDelivery(ctx context.Context, cfg Config, root, input, result, prompt string, profile AgentProfile, job *WorkflowJob) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	defer cancel()
+	var err error
 	job.PromptPreset = engineeringPromptVersion
 	inputFiles := job.Files
 	if inputFiles == nil {
@@ -773,16 +782,20 @@ func agenticDelivery(ctx context.Context, cfg Config, root, input, result, promp
 	candidate := draft
 	completedReviews := 0
 	converged := false
+	verify := profile.ReviewPasses > 1 && profile.VerificationFocus != ""
 	runReview := func() error {
-		ctx := context.WithValue(ctx, llmStageKey{}, fmt.Sprintf("review-%d", completedReviews+1))
-		if converged {
-			return nil
+		stage := fmt.Sprintf("review-%d", completedReviews+1)
+		focus := profile.ReviewFocus
+		if verify && completedReviews+1 == profile.ReviewPasses {
+			stage = "verify"
+			focus = profile.VerificationFocus
 		}
+		ctx := context.WithValue(ctx, llmStageKey{}, stage)
 		next := result
 		if completedReviews+1 < profile.ReviewPasses {
 			next = filepath.Join(filepath.Dir(result), fmt.Sprintf("review-%d.zip", completedReviews+1))
 		}
-		reviewTask := agentPrompt(prompt, profile.ReviewFocus, true, true)
+		reviewTask := agentPrompt(prompt, focus, true, true)
 		var err error
 		emit(ctx, workflowEvent{Type: "status", Message: fmt.Sprintf("Agentic review %d/%d", completedReviews+1, profile.ReviewPasses)})
 		if hosted {
@@ -794,7 +807,7 @@ func agenticDelivery(ctx context.Context, cfg Config, root, input, result, promp
 			}
 		}
 		if !hosted {
-			reviewPrompt := agentPrompt(prompt, profile.ReviewFocus, true, false)
+			reviewPrompt := agentPrompt(prompt, focus, true, false)
 			textConfig := cfg
 			if profile.ReviewContextBytes > 0 {
 				draftFiles, err := zipChecksums(candidate)
@@ -818,7 +831,7 @@ func agenticDelivery(ctx context.Context, cfg Config, root, input, result, promp
 		if err := validateZipStrict(next); err != nil {
 			return fmt.Errorf("agentic review: %w", err)
 		}
-		if next != result {
+		if next != result && !verify {
 			before, err := zipChecksums(candidate)
 			if err != nil {
 				return err
@@ -840,17 +853,23 @@ func agenticDelivery(ctx context.Context, cfg Config, root, input, result, promp
 		return nil
 	}
 	if profile.Runner == "langgraph" {
-		return runAgentGraph(ctx, cfg.LangGraphPython, profile.ReviewPasses, func(stage string) error {
+		return runAgentGraph(ctx, cfg.LangGraphPython, profile.ReviewPasses, verify, func(stage string) (bool, error) {
 			if stage == "draft" {
-				return runDraft()
+				return false, runDraft()
 			}
-			return runReview()
+			err := runReview()
+			return converged, err
 		})
 	}
 	if err := runDraft(); err != nil {
 		return err
 	}
-	return runReview()
+	for completedReviews < profile.ReviewPasses && !converged {
+		if err := runReview(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validateZipStrict(path string) error {

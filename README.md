@@ -628,6 +628,25 @@ pipkin --agent-profile thorough
 
 **Focused** runs a draft and one review with up to 4 KiB of original-file references for text models. **Thorough** allows two reviews and up to 8 KiB of references. A no-change review ends remaining model calls. The actual reference allowance is also capped at one eighth of the text context budget. Pipkin sends original versions of changed text files that fit within that allowance. Hosted review can compare the full original and candidate archives.
 
+### Project defaults
+
+With `agent_profile` unset or set to `project`, an agentic delivery uses the workspace's selected or detected project profile. Set it with **Project** in the web UI or `J` in the terminal. Explicit `builtin`, `focused`, `thorough`, and custom selections still take precedence.
+
+| Project profile | Bundled skill | Final verification |
+| --- | --- | --- |
+| General | Deliverable review | Completeness and usability in the review pass |
+| Existing software | Software maintenance | Targeted regression coverage |
+| New software | Software bootstrap | Clean-checkout setup and runnable entry point |
+| Research | Research evidence | Provenance, consistency, and uncertainty |
+| Pitch or application | Pitch package | Recipient decision and next action |
+| Job search | Job search | Eligibility, unknowns, and verified experience |
+
+Every profile receives the shared deliverable-review skill plus its domain skill where listed. Bundled guidance applies to free prompts and text or hosted deliveries. It is recorded by name and hash in delivery metadata. The workspace's **Skip automatic project guidance** option also disables bundled guidance. Workspace instructions and enabled custom skills can still be managed through **Instructions**.
+
+General uses draft → review. The other profiles use draft → domain review → verification. Each stage operates on the prior candidate within the existing archive and approval controls. A configured `langgraph_python` interpreter runs the project graph. When it is unset, Pipkin runs the same stages in Go. With text providers, verification is a model review of the available files. Hosted providers can execute checks in their interpreter when available.
+
+To customize one project type, add an entry such as `project:research` under `agent_profiles` while leaving `agent_profile` set to `project`. Set `runner` to `langgraph` or `builtin` on that entry, and set `review_passes`, `draft_focus`, `review_focus`, and optionally `verification_focus`. A separate verification stage requires at least two passes. The **Profiles** editor accepts these overrides.
+
 Both profiles use Pipkin’s `engineering-v1` prompts. The draft instructions prioritize focused edits, existing conventions, and compatibility. The reviewer checks the candidate against the task and the evidence available. Hosted archive passes may run focused checks in the interpreter. Local text passes inspect the supplied code and cannot run project tests. The saved job records the selected profile and prompt preset.
 
 For custom profiles, `draft_focus` and `review_focus` add project-specific instructions. Set `review_context_bytes` to 0–16384 for optional original-file references in text review. For example, use `"draft_focus": "Preserve public API signatures."` and `"review_focus": "Check cancellation and error paths."`.
@@ -728,3 +747,15 @@ Decisions are stored under each delivery as `decisions.json` and survive closing
 ## Licence
 
 This source code is licensed under the Mozilla Public License 2.0. See [LICENSE](LICENSE).
+
+### Free prompt tools and bundled skills
+
+Open **Instructions → Bundled skills** in the browser, or press `I` in the terminal and open a row marked **(bundled)**. Skills are packaged with Pipkin. Project skills follow the workspace profile by default. Press Space to toggle a bundled skill or Enter to edit it. The web Instructions page offers the same controls. Edits are saved to the workspace at `.agents/skills/<name>/SKILL.md`. Toggles apply to the current workspace and only control guidance. Enable the provider tools separately to give Free Prompt actual tool access.
+
+To give Free Prompt access to web research and hosted Python execution, add this setting to an OpenAI provider profile in **Profiles** (or to the unprofiled defaults). Use a model that supports the tools you select.
+
+```json
+"free_prompt_tools": ["web_search", "code_interpreter"]
+```
+
+With a supported model, the web tool searches public sources and can extract information from pages it can open. The Python tool runs remotely in OpenAI's sandbox. Pipkin includes selected text context in the request, preserves cited source URLs in the reply, and leaves workspace edits to the existing delivery workflow. This integration covers one-off public-source extraction and textual Python results. It does not run a local browser, crawl sites in bulk, or download generated interpreter files. Omit the setting or use an empty list for text-only prompts.

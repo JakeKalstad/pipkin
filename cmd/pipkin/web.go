@@ -65,6 +65,7 @@ type webPage struct {
 	ContextSelected                              bool
 	PromptSystem                                 string
 	SkillPaths                                   []string
+	BundledSkills                                []bundledSkillView
 	InstructionPath, InstructionDraft            string
 	HTTPStatus                                   int
 	Help                                         bool
@@ -91,7 +92,7 @@ type webPage struct {
 	Progress                                     workflowEvent
 }
 
-var reviewHTML = template.Must(template.New("web.html").Funcs(template.FuncMap{"skillActive": slices.Contains[[]string, string]}).ParseFS(webTemplateFiles, "web.html", "help.html"))
+var reviewHTML = template.Must(template.New("web.html").Funcs(template.FuncMap{"skillActive": slices.Contains[[]string, string], "freePromptSources": freePromptSources}).ParseFS(webTemplateFiles, "web.html", "help.html"))
 
 type serviceLink struct {
 	Label string
@@ -304,7 +305,7 @@ func webHandlerForRoot(root string) http.Handler {
 			})
 		}
 		sort.Slice(page.Providers, func(i, j int) bool { return page.Providers[i].Name < page.Providers[j].Name })
-		page.AgentProfile, _, _ = cfg.activeAgentProfile()
+		page.AgentProfile, _, _ = cfg.deliveryAgentProfile(root)
 		if page.HTTPStatus != 0 {
 			w.WriteHeader(page.HTTPStatus)
 		}
@@ -529,7 +530,7 @@ func webHandlerForRoot(root string) http.Handler {
 		http.Redirect(w, r, "/prompt?conversation="+url.QueryEscape(thread.ID), http.StatusSeeOther)
 	})
 	mux.HandleFunc("/instructions", func(w http.ResponseWriter, r *http.Request) {
-		page := webPage{Title: "System instructions", Root: root, SkillPaths: workspaceSkills(root)}
+		page := webPage{Title: "System instructions", Root: root, SkillPaths: editableWorkspaceSkills(root)}
 		var guidanceErr error
 		page.ProjectGuidance, page.ProjectGuidanceSource, guidanceErr = projectGuidance(root)
 		if guidanceErr != nil {
@@ -541,6 +542,7 @@ func webHandlerForRoot(root string) http.Handler {
 				page.Error = err.Error()
 			}
 			page.Instructions = &settings
+			page.BundledSkills = workspaceBundledSkills(root, settings, loadConfig().FreePromptTools)
 			page.InstructionFiles = strings.Join(settings.Files, "\n")
 			if r.URL.Query().Get("saved") == "1" {
 				page.Notice = "Instructions saved for this workspace."
@@ -552,7 +554,15 @@ func webHandlerForRoot(root string) http.Handler {
 			return
 		}
 		page.InstructionFiles = r.PostForm.Get("instruction_files")
-		settings := instructionSettings{SystemPrompt: r.PostForm.Get("system_prompt"), SkipProjectInstructions: r.PostForm.Get("skip_project_instructions") == "1"}
+		settings, err := loadInstructionSettings(root)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+		settings.SystemPrompt = r.PostForm.Get("system_prompt")
+		settings.SkipProjectInstructions = r.PostForm.Get("skip_project_instructions") == "1"
+		settings.Files = nil
+		page.BundledSkills = workspaceBundledSkills(root, settings, loadConfig().FreePromptTools)
 		for _, line := range strings.Split(page.InstructionFiles, "\n") {
 			if path := strings.TrimSpace(line); path != "" {
 				settings.Files = append(settings.Files, path)
@@ -588,7 +598,7 @@ func webHandlerForRoot(root string) http.Handler {
 		page.InstructionPath = r.PostForm.Get("path")
 		page.InstructionDraft = strings.ReplaceAll(r.PostForm.Get("markdown"), "\r\n", "\n")
 		if r.PostForm.Get("action") == "toggle" {
-			if err := toggleStandardSkill(root, page.InstructionPath); err != nil {
+			if err := toggleStandardSkill(root, page.InstructionPath, loadConfig().FreePromptTools...); err != nil {
 				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 				return
 			}

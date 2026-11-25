@@ -95,6 +95,9 @@ func standardInstructionDraft(root, rel string) (string, error) {
 	if !errors.Is(err, os.ErrNotExist) {
 		return text, err
 	}
+	if bundled, err := bundledSkillTemplate(name); err == nil {
+		return string(bundled), nil
+	}
 	return fmt.Sprintf("---\nname: %s\ndescription: Apply the %s workflow when a task explicitly calls for it.\n---\n\n# %s\n\n## Workflow\n\n1. Identify the trigger, expected outcome, and relevant files.\n2. Inspect the normal entry point and its callers before changing behaviour.\n3. Check the primary path and one relevant failure or boundary case.\n4. Report findings with file references, checks run, and any missing evidence.\n", name, name, name), nil
 }
 
@@ -169,7 +172,7 @@ func saveStandardInstruction(root, rel, text string) error {
 	return os.Rename(f.Name(), path)
 }
 
-func toggleStandardSkill(root, rel string) error {
+func toggleStandardSkill(root, rel string, tools ...string) error {
 	name, ok := standardInstructionPath(rel)
 	if !ok || name == "" {
 		return errors.New("choose a skill to toggle")
@@ -177,6 +180,15 @@ func toggleStandardSkill(root, rel string) error {
 	settings, err := loadInstructionSettings(root)
 	if err != nil {
 		return err
+	}
+	for _, skill := range workspaceBundledSkills(root, settings, tools) {
+		if skill.Path == rel {
+			if settings.BundledSkills == nil {
+				settings.BundledSkills = make(map[string]bool)
+			}
+			settings.BundledSkills[skill.Name] = !skill.Active
+			return saveInstructionSettings(root, settings)
+		}
 	}
 	if i := slices.Index(settings.Files, rel); i >= 0 {
 		settings.Files = slices.Delete(settings.Files, i, i+1)
@@ -187,7 +199,7 @@ func toggleStandardSkill(root, rel string) error {
 }
 
 func (a *App) editStandardInstructions(reader *bufio.Reader, restore func()) error {
-	paths := append([]string{projectInstructionsFile}, workspaceSkills(a.cwd)...)
+	paths := append([]string{projectInstructionsFile}, editableWorkspaceSkills(a.cwd)...)
 	settings, err := loadInstructionSettings(a.cwd)
 	if err != nil {
 		return err
@@ -196,14 +208,24 @@ func (a *App) editStandardInstructions(reader *bufio.Reader, restore func()) err
 	var name, notice string
 	naming := false
 	for {
+		bundled := workspaceBundledSkills(a.cwd, settings, a.cfg.FreePromptTools)
 		height, _ := size()
 		rows := max(1, height-5)
 		offset = max(min(offset, index), index-rows+1)
-		lines := []string{" PIPKIN / INSTRUCTIONS", " ↑↓ choose  Enter edit  Space enable/disable  n new skill  q back", " " + notice}
-		for i := offset; i < min(len(paths), offset+rows); i++ {
+		lines := []string{" PIPKIN / INSTRUCTIONS", " ↑↓ choose  Enter open  Space toggle  n new  b bundled  q back", " " + notice}
+		for i := offset; i < min(len(paths)+len(bundled), offset+rows); i++ {
 			marker := "   "
 			if i == index {
 				marker = " › "
+			}
+			if i >= len(paths) {
+				skill := bundled[i-len(paths)]
+				status := "off"
+				if skill.Active {
+					status = "on"
+				}
+				lines = append(lines, marker+skill.Name+" (bundled) ["+status+"]")
+				continue
 			}
 			label := paths[i]
 			if i > 0 {
@@ -245,13 +267,26 @@ func (a *App) editStandardInstructions(reader *bufio.Reader, restore func()) err
 			switch key {
 			case "q", "esc":
 				return nil
+			case "b":
+				var catalog []string
+				_, width := size()
+				for _, skill := range bundled {
+					catalog = append(catalog, wrapPromptText(skill.Body, max(1, width-2))...)
+				}
+				showPager(reader, " PIPKIN / BUNDLED SKILLS", catalog, nil, safeDisplayLine)
 			case "up", "k":
 				index = max(0, index-1)
 			case "down", "j":
-				index = min(len(paths)-1, index+1)
+				index = min(len(paths)+len(bundled)-1, index+1)
 			case " ":
 				if index > 0 {
-					if err := toggleStandardSkill(a.cwd, paths[index]); err != nil {
+					path := ""
+					if index >= len(paths) {
+						path = bundled[index-len(paths)].Path
+					} else {
+						path = paths[index]
+					}
+					if err := toggleStandardSkill(a.cwd, path, a.cfg.FreePromptTools...); err != nil {
 						return err
 					}
 					settings, err = loadInstructionSettings(a.cwd)
@@ -262,7 +297,11 @@ func (a *App) editStandardInstructions(reader *bufio.Reader, restore func()) err
 			case "n":
 				naming = true
 			case "enter":
-				rel = paths[index]
+				if index >= len(paths) {
+					rel = bundled[index-len(paths)].Path
+				} else {
+					rel = paths[index]
+				}
 			}
 		}
 		if rel == "" {
@@ -274,7 +313,7 @@ func (a *App) editStandardInstructions(reader *bufio.Reader, restore func()) err
 			notice = safeDisplayLine(err.Error())
 			continue
 		}
-		paths = append([]string{projectInstructionsFile}, workspaceSkills(a.cwd)...)
+		paths = append([]string{projectInstructionsFile}, editableWorkspaceSkills(a.cwd)...)
 		if found := slices.Index(paths, rel); found >= 0 {
 			index = found
 		}
@@ -292,7 +331,7 @@ func editInstructionInTerminal(root, rel string, restore func()) (bool, error) {
 		return false, err
 	}
 	text, err := editTerminalDocument(root, "*.md", draft, maxInstructionBytes, restore)
-	if err != nil || (readErr == nil && string(text) == original) {
+	if err != nil || (readErr == nil && string(text) == original) || (readErr != nil && string(text) == draft && isBundledInstruction(rel)) {
 		return false, err
 	}
 	err = saveStandardInstruction(root, rel, string(text))
@@ -365,4 +404,10 @@ func editTerminalDocument(root, pattern, draft string, limit int, restore func()
 	}
 	defer edited.Close()
 	return readLimited(edited, limit)
+}
+
+func isBundledInstruction(rel string) bool {
+	name, _ := standardInstructionPath(rel)
+	_, err := bundledSkillTemplate(name)
+	return err == nil
 }

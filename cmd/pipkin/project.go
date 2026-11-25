@@ -24,8 +24,8 @@ type projectProfile struct {
 }
 
 var projectProfiles = []projectProfile{
-	{"general", "General", "", "# Project\n\nDescribe the goal, expected outputs, and how to verify them.\n"},
-	{"software", "Existing software", "", "# Software project\n\nDocument setup, build, test, and deployment commands.\n"},
+	{"general", "General", "Define success in terms of the requested deliverable. Verify its completeness and label any unconfirmed assumptions.", "# Project\n\nDescribe the goal, expected outputs, and how to verify them.\n"},
+	{"software", "Existing software", "Work through normal entry points. Preserve compatibility and data, and check the changed behavior with focused regression coverage.", "# Software project\n\nDocument setup, build, test, and deployment commands.\n"},
 	{"software-new", "New software", "Define a small first milestone and a runnable entry point. Choose the stack from the user's constraints. Include a minimal check and document how to run it.", "# New software project\n\n## Goal\n\n## First runnable milestone\n\n## Setup and checks\n"},
 	{"research", "Research", "State the research question and scope. Track each claim with its source, date, method, and uncertainty. Distinguish evidence, interpretation, and open questions. Record enough detail to reproduce calculations.", "# Research project\n\n## Question\n\n## Sources and evidence\n\n## Method\n\n## Open questions\n"},
 	{"pitch", "Grant, marketing, seed, or sales package", "Identify the audience, decision, and submission constraints. Lead with the problem, evidence, proposed outcome, and specific ask. Label assumptions and projections. Check claims, numbers, and eligibility against the supplied material.", "# Pitch or application\n\n## Audience and decision\n\n## Problem and evidence\n\n## Proposal and ask\n\n## Deadlines and requirements\n"},

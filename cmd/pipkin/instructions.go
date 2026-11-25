@@ -16,9 +16,10 @@ const maxInstructionBytes = 32 * 1024
 const maxInstructionFiles = 16
 
 type instructionSettings struct {
-	SkipProjectInstructions bool     `json:"skip_project_instructions,omitempty"`
-	SystemPrompt            string   `json:"system_prompt,omitempty"`
-	Files                   []string `json:"instruction_files,omitempty"`
+	BundledSkills           map[string]bool `json:"bundled_skills,omitempty"`
+	SkipProjectInstructions bool            `json:"skip_project_instructions,omitempty"`
+	SystemPrompt            string          `json:"system_prompt,omitempty"`
+	Files                   []string        `json:"instruction_files,omitempty"`
 }
 
 type instructionSource struct {
@@ -147,7 +148,13 @@ func resolveInstructions(root string, saved, request instructionSettings, profil
 		sources = append(sources, instructionSource{Name: name, SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(body)))})
 		return nil
 	}
+	seen := make(map[string]bool)
+	var bundled []profileGuidance
 	for _, profile := range profiles {
+		if strings.HasPrefix(profile.label, "Bundled skill: ") {
+			bundled = append(bundled, profile)
+			continue
+		}
 		if err := add(profile.label, profile.prompt); err != nil {
 			return "", nil, err
 		}
@@ -155,7 +162,6 @@ func resolveInstructions(root string, saved, request instructionSettings, profil
 	if err := add("Workspace system prompt", saved.SystemPrompt); err != nil {
 		return "", nil, err
 	}
-	seen := make(map[string]bool)
 	if !saved.SkipProjectInstructions {
 		body, source, err := projectGuidance(root)
 		if err != nil {
@@ -173,10 +179,41 @@ func resolveInstructions(root string, saved, request instructionSettings, profil
 		if err := add("Project profile: "+profile.Label, profile.Guidance); err != nil {
 			return "", nil, err
 		}
+		skills, err := projectSkillGuidance(project.Profile)
+		if err != nil {
+			return "", nil, err
+		}
+		bundled = append(bundled, skills...)
+	}
+	for _, skill := range bundledSkillCatalog() {
+		if saved.BundledSkills[skill.Name] {
+			bundled = append(bundled, profileGuidance{"Bundled skill: " + skill.Name, skill.Body})
+		}
+	}
+	for _, skill := range bundled {
+		name := strings.TrimPrefix(skill.label, "Bundled skill: ")
+		rel := bundledSkillPath(name)
+		if seen[rel] {
+			continue
+		}
+		seen[rel] = true
+		if active, found := saved.BundledSkills[name]; found && !active {
+			continue
+		}
+		body, err := readInstructionFile(root, rel)
+		if errors.Is(err, os.ErrNotExist) {
+			body = skill.prompt
+		} else if err != nil {
+			return "", nil, fmt.Errorf("read bundled skill override %q: %w", rel, err)
+		}
+		if err := add(skill.label, body); err != nil {
+			return "", nil, err
+		}
 	}
 	for _, files := range [][]string{saved.Files, request.Files} {
 		for _, rel := range files {
-			if seen[rel] {
+			name, _ := standardInstructionPath(rel)
+			if enabled, found := saved.BundledSkills[name]; seen[rel] || (found && !enabled) {
 				continue
 			}
 			seen[rel] = true
