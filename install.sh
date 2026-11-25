@@ -5,7 +5,7 @@ repo=JakeKalstad/pipkin
 version=${PIPKIN_VERSION:-latest}
 if [ "$version" != latest ]; then
     if ! printf '%s\n' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$'; then
-        printf '%s\n' 'PIPKIN_VERSION must be latest or a release tag such as v0.12.0' >&2
+        printf '%s\n' 'PIPKIN_VERSION must be latest or a release tag such as v0.15.0' >&2
         exit 1
     fi
 fi
