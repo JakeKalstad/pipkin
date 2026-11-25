@@ -21,9 +21,9 @@ input[type=search]{flex:1 1 160px}label{overflow-wrap:anywhere}button:focus-visi
 <section class="card"><h1>Workbook</h1>
 <form method="post" action="/workbook">
 <input type="hidden" name="csrf" value="{{.Token}}">
-<p><label for="workbook-input">Workspace .xlsx path</label> <input id="workbook-input" name="file" value="{{.WorkbookInput}}" required></p>
+<p><label for="workbook-input">Workspace .csv or .xlsx path</label> <input id="workbook-input" name="file" value="{{.WorkbookInput}}" required></p>
 <details{{if .WorkbookEdits}} open{{end}}><summary>Edit cells in a new copy</summary>
-<p><label for="workbook-output">New .xlsx path</label> <input id="workbook-output" name="output" value="{{.WorkbookOutput}}"></p>
+<p><label for="workbook-output">New path (same format)</label> <input id="workbook-output" name="output" value="{{.WorkbookOutput}}"></p>
 <label for="workbook-edits">Cell edits (JSON)</label><textarea id="workbook-edits" name="edits" placeholder='[{"sheet":"Sheet1","cell":"B2","value":42}]'>{{.WorkbookEdits}}</textarea>
 </details>
 <p><button type="submit">Run workbook operation</button></p></form>

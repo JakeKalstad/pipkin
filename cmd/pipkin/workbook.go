@@ -20,24 +20,38 @@ var workbookHelper string
 
 func workbookPath(root, rel string) (string, error) {
 	if !safeRel(rel) || filepath.ToSlash(filepath.Clean(rel)) != rel ||
-		!hiddenPathAllowed(rel, false) || !strings.EqualFold(filepath.Ext(rel), ".xlsx") {
-		return "", errors.New("use a workspace-relative .xlsx path")
+		!hiddenPathAllowed(rel, false) || !spreadsheetPath(rel) {
+		return "", errors.New("use a workspace-relative .csv or .xlsx path")
 	}
 	return filepath.Join(root, filepath.FromSlash(rel)), nil
 }
 
-func workbookOperation(ctx context.Context, root, input, output string, edits []byte) (json.RawMessage, error) {
+func spreadsheetPath(rel string) bool {
+	ext := filepath.Ext(rel)
+	return strings.EqualFold(ext, ".csv") || strings.EqualFold(ext, ".xlsx")
+}
+
+func checkedWorkbookSource(root, input string) (string, error) {
 	source, err := workbookPath(root, input)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	info, err := statSelectedPath(root, input)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	if !info.Mode().IsRegular() || info.Size() > 32<<20 {
-		return nil, errors.New("workbook must be a regular file no larger than 32 MiB")
+		return "", errors.New("workbook must be a regular file no larger than 32 MiB")
 	}
+	return source, nil
+}
+
+func workbookOperation(ctx context.Context, root, input, output string, edits []byte) (json.RawMessage, error) {
+	source, err := checkedWorkbookSource(root, input)
+	if err != nil {
+		return nil, err
+	}
+	ext := strings.ToLower(filepath.Ext(input))
 	python := strings.TrimSpace(os.Getenv("PIPKIN_XLSX_PYTHON"))
 	if python == "" {
 		python = "python3"
@@ -47,6 +61,9 @@ func workbookOperation(ctx context.Context, root, input, output string, edits []
 	if output != "" {
 		if len(edits) == 0 || len(edits) > 256<<10 {
 			return nil, errors.New("provide a cell edit manifest up to 256 KiB")
+		}
+		if !strings.EqualFold(filepath.Ext(output), ext) {
+			return nil, errors.New("output must use the same spreadsheet format as the source")
 		}
 		destination, err = workbookPath(root, output)
 		if err != nil {
@@ -65,7 +82,7 @@ func workbookOperation(ctx context.Context, root, input, output string, edits []
 		if !parent.IsDir() {
 			return nil, errors.New("output parent must be a directory")
 		}
-		f, err := os.CreateTemp(filepath.Dir(destination), ".pipkin-workbook-*.xlsx")
+		f, err := os.CreateTemp(filepath.Dir(destination), ".pipkin-workbook-*"+ext)
 		if err != nil {
 			return nil, err
 		}
@@ -78,6 +95,24 @@ func workbookOperation(ctx context.Context, root, input, output string, edits []
 	} else if len(edits) > 0 {
 		return nil, errors.New("cell edits require a separate output workbook path")
 	}
+	var result json.RawMessage
+	if ext == ".csv" {
+		result, err = csvOperation(source, tmp, edits)
+	} else {
+		result, err = runXLSXOperation(ctx, root, python, args, edits)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if tmp != "" {
+		if err := os.Link(tmp, destination); err != nil {
+			return nil, err
+		}
+	}
+	return json.RawMessage(result), nil
+}
+
+func runXLSXOperation(ctx context.Context, root, python string, args []string, edits []byte) (json.RawMessage, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, python, args...)
@@ -92,17 +127,16 @@ func workbookOperation(ctx context.Context, root, input, output string, edits []
 	if !json.Valid(result) {
 		return nil, errors.New("invalid workbook response")
 	}
-	if tmp != "" {
-		if err := os.Link(tmp, destination); err != nil {
-			return nil, err
-		}
-	}
 	return json.RawMessage(result), nil
 }
 
 func (a *App) workbookTUI(reader *bufio.Reader, input string, restore func()) {
 	if _, err := workbookPath(a.cwd, input); err != nil {
-		a.status = "Highlight an .xlsx workbook first."
+		a.status = "Highlight a CSV or XLSX file first."
+		return
+	}
+	if strings.EqualFold(filepath.Ext(input), ".csv") {
+		a.csvTUI(reader, input)
 		return
 	}
 	for {

@@ -171,7 +171,7 @@ func (a *App) render() {
 	if a.cursor >= a.offset+rows {
 		a.offset = a.cursor - rows + 1
 	}
-	shortcuts := "  ↑↓ move  ←→ expand  Space toggle  s Select one  z ZIP  p LLM"
+	shortcuts := "  ↑↓ move  ←→ expand  v View  W Sheet  Space toggle  s Select one  z ZIP  p LLM"
 	if a.cfg.supportsAgentic() {
 		shortcuts += "  P Agentic"
 	}
@@ -180,9 +180,9 @@ func (a *App) render() {
 	}
 	shortcuts += "  g/G Git  H Hidden  ? Help  J Project  I Instructions  f Free prompt  D MkDocs  r Review  i Import  q Quit"
 	if w < utf8.RuneCountInString(shortcuts) {
-		shortcuts = " ? Help  D MkDocs  J Project  I Instructions  f Free prompt  s Select one  Space toggle  g/G Git  H Hidden  z ZIP  p LLM"
+		shortcuts = " ? Help  v View  W Sheet  D MkDocs  J Project  I Instructions  f Free prompt  s Select one  Space toggle  g/G Git  H Hidden  z ZIP  p LLM"
 		if a.cfg.supportsAgentic() {
-			shortcuts = " ? Help  D MkDocs  J Project  I Instructions  f Free prompt  s Select one  p LLM  P Agentic  Space toggle  g/G Git  H Hidden  z ZIP"
+			shortcuts = " ? Help  v View  W Sheet  p LLM  P Agentic  D MkDocs  J Project  I Instructions  f Free prompt  s Select one  Space toggle  g/G Git  H Hidden  z ZIP"
 		}
 		if len(a.cfg.ProviderProfiles) > 0 {
 			shortcuts = " m Model " + shortcuts
@@ -252,6 +252,9 @@ func (a *App) render() {
 	} else {
 		outputLinks[len(lines)] = outputFolderURL(a.outputPath(""))
 		lines = append(lines, " ZIP: "+safeDisplayLine(a.outputPath("")))
+		if item := a.active(); item != nil && !item.dir && spreadsheetPath(item.rel) {
+			lines = append(lines, " W Edit spreadsheet  v View file")
+		}
 	}
 	var side []string
 	var sideLinks map[int]string

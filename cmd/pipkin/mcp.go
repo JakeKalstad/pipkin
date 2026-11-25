@@ -62,12 +62,12 @@ func mcpTools() []map[string]any {
 			"root": root, "action": map[string]any{"type": "string", "enum": []string{"show", "set", "init"}},
 			"profile": text,
 		}, "root", "action"),
-		mcpTool("pipkin_workbook", "Inspect XLSX sheets or apply explicit cell edits to a separate workbook copy", map[string]any{
+		mcpTool("pipkin_workbook", "Inspect CSV or XLSX sheets or apply explicit cell edits to a separate copy (sheet required for XLSX)", map[string]any{
 			"root": root, "file": text, "output": text,
 			"edits": map[string]any{"type": "array", "items": map[string]any{"type": "object",
 				"properties": map[string]any{"sheet": text, "cell": text, "value": map[string]any{},
 					"kind": map[string]any{"type": "string", "enum": []string{"value", "formula"}}},
-				"required": []string{"sheet", "cell", "value"}}},
+				"required": []string{"cell", "value"}}},
 		}, "root", "file"),
 		mcpTool("pipkin_prompt", "Send a text-only prompt using workspace instructions. Returns the response without creating a delivery or attaching project files", map[string]any{
 			"root": root, "prompt": text, "system_prompt": text, "instruction_files": instructionFiles, "provider_profile": text, "conversation": text,

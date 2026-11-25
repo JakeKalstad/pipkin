@@ -316,6 +316,40 @@ class PipkinEndToEnd(unittest.TestCase):
             time.sleep(0.01)
         self.assertEqual(captured.read_text(), str(self.output))
 
+    def test_terminal_previews_file_without_selecting_it(self):
+        terminal = Terminal(self.start)
+        self.addCleanup(terminal.close)
+        terminal.expect("v View")
+        terminal.send("n\r")
+        terminal.expect("PIPKIN / FILE: alpha.txt")
+        terminal.expect("Old alpha")
+        terminal.send("q")
+        terminal.expect("0 files selected")
+        terminal.send("q")
+        self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
+
+    def test_terminal_edits_csv_in_grid(self):
+        source = self.project / "0.csv"
+        source.write_text('name,note\nAlice,"hello, world"\n')
+        terminal = Terminal(self.start)
+        self.addCleanup(terminal.close)
+        terminal.expect("v View")
+        terminal.expect("W Sheet")
+        terminal.send("W")
+        terminal.expect("PIPKIN / CSV: 0.csv")
+        terminal.send("jl\r")
+        terminal.expect("Edit B2")
+        terminal.send("revised, note\r")
+        terminal.expect("1 unsaved cell edit")
+        terminal.send("s")
+        terminal.expect("Save a new CSV copy")
+        terminal.send("\r")
+        terminal.expect("Saved:")
+        terminal.send("q")
+        self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
+        self.assertEqual(source.read_text(), 'name,note\nAlice,"hello, world"\n')
+        self.assertEqual((self.project / "0-edited.csv").read_text(), 'name,note\nAlice,"revised, note"\n')
+
     def test_terminal_select_one(self):
         folder = self.project / "folder"
         folder.mkdir()

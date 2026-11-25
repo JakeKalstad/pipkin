@@ -1104,9 +1104,9 @@ func main() {
 		instructionFiles = append(instructionFiles, path)
 		return nil
 	})
-	workbook := flag.String("workbook", "", "inspect a workspace-relative .xlsx workbook")
+	workbook := flag.String("workbook", "", "inspect a workspace-relative CSV or XLSX file")
 	workbookEdits := flag.String("workbook-edits", "", "JSON cell edit manifest for --workbook")
-	workbookOutput := flag.String("workbook-output", "", "new workspace-relative .xlsx copy for edited cells")
+	workbookOutput := flag.String("workbook-output", "", "new workspace-relative spreadsheet copy for edited cells")
 	listProjectProfiles := flag.Bool("project-profiles", false, "list available project profile IDs")
 	projectMode := flag.Bool("project", false, "show project profile and source")
 	projectType := flag.String("project-profile", "", "save a workspace profile")
@@ -1398,7 +1398,17 @@ func main() {
 			if a.cursor < len(a.visible)-1 {
 				a.cursor++
 			}
-		case "right", "l":
+		case "v":
+			if err := a.previewFile(reader, n); err != nil {
+				a.status = safeDisplayLine(err.Error())
+			}
+		case "right", "l", "enter":
+			if key == "enter" && n != nil && !n.dir {
+				if err := a.previewFile(reader, n); err != nil {
+					a.status = safeDisplayLine(err.Error())
+				}
+				continue
+			}
 			if n != nil && n.dir {
 				if n.ignored && len(n.children) == 0 {
 					_ = scan(n, filepath.Join(a.cwd, n.rel))
@@ -1447,7 +1457,7 @@ func main() {
 			}
 		case "W":
 			if n == nil || n.dir {
-				a.status = "Highlight an .xlsx workbook first."
+				a.status = "Highlight a CSV or XLSX file first."
 			} else {
 				a.workbookTUI(reader, n.rel, restore)
 			}
@@ -1465,6 +1475,7 @@ func main() {
 			}
 		case "?":
 			showPager(reader, " PIPKIN / HELP · "+buildMetadata().Version, []string{
+				"Enter/v  Preview the highlighted file. Enter opens directories.",
 				"Space  Toggle selection       s  Select only the highlighted item",
 				"z      Create a ZIP           p  Send a delivery",
 				"P      Draft and review      r  Review saved deliveries",
@@ -1473,7 +1484,7 @@ func main() {
 				"I      Edit AGENTS.md and Agent Skills",
 				"J      Choose a project profile or initialise a repository",
 				"       List profile IDs with pipkin --project-profiles.",
-				"W      Inspect or edit the highlighted .xlsx workbook",
+				"W      Inspect or edit the highlighted CSV or XLSX file",
 				"O      Open the latest output folder in your file manager",
 				"D      Generate a MkDocs ZIP from the selected files",
 				"f      Send a free prompt without selecting files",

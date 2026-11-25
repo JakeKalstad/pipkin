@@ -28,7 +28,7 @@ Yes, this does involve reading a diff. We appreciate your patience with this leg
 | Ask a question without attaching files and resume it later | [Free prompt](#free-prompt) |
 | Give the model project rules or reusable skills | [System instructions and Markdown sources](#system-instructions-and-markdown-sources) |
 | Turn project files into a documentation or research site | [Export an MkDocs site](#export-an-mkdocs-site) |
-| Preview a spreadsheet or edit cells in a copy | [XLSX workbooks](#xlsx-workbooks) |
+| Preview a spreadsheet or edit cells in a copy | [CSV and XLSX spreadsheets](#csv-and-xlsx-spreadsheets) |
 | Connect another tool | [HTTP API](#web-http-api) or [MCP](#mcp) |
 
 From an installed binary, run `pipkin .` for the terminal picker. To open the browser interface, set `LISTEN_URL=http://127.0.0.1:8787` and run `pipkin --web .`. Choose a [provider profile](#switch-between-model-providers) before sending a model request. Workspace files and saved history live locally. The selected provider determines where inference runs.
@@ -447,9 +447,11 @@ pipkin --init-project pitch ./seed-round
 
 The HTTP interface uses `GET /project` and URL-encoded `POST /project` with `profile` and optional `action=init`. MCP exposes `pipkin_project(root, action, profile?)` with actions `show`, `set`, and `init`.
 
-### XLSX workbooks
+### CSV and XLSX spreadsheets
 
-Install `openpyxl>=3.1` in a Python environment and set `PIPKIN_XLSX_PYTHON` to that environment's Python if needed. **Workbook** in the web UI previews sheet names, dimensions, and the first 20 rows and 12 columns of up to 20 sheets. To edit, supply a JSON array of cells and a new output path. Pipkin returns the before-and-after values and writes a separate copy. The source stays intact.
+Highlight a CSV and press `W` to open the grid. Use the arrow keys to move, Enter to edit a cell, and `s` to name and save a new CSV. `v` opens the raw text preview. CSV support uses the Go standard library. Web, CLI, and MCP use the same cell-edit format as XLSX, except `sheet` is optional (use `CSV` if supplied). CSV edits work on existing cells and use scalar values only.
+
+For XLSX, install `openpyxl>=3.1` in a Python environment and set `PIPKIN_XLSX_PYTHON` to that environment's Python if needed. **Workbook** in the web UI previews sheet names, dimensions, and the first 20 rows and 12 columns of up to 20 sheets. To edit, supply a JSON array of cells and a new output path. Pipkin returns the before-and-after values and writes a separate copy. The source stays intact.
 
 ```json
 [
@@ -500,7 +502,7 @@ Start with `pipkin --web` and the loopback `LISTEN_URL` shown above. These endpo
 | `GET /prompt` | Optional `conversation` | Open conversation history or a saved transcript. |
 | `POST /prompt` | `prompt`, optional `conversation`, `provider_profile`, `system_prompt`, repeated `instruction_files`. To delete, send `action=delete` and `conversation`. | Continue or create a conversation, or delete it. HTML submissions redirect. JSON submissions return the result. |
 | `GET /project`, `POST /project` | POST accepts `profile` and optional `action=init`. | Show or set the workspace profile and optionally initialise Git. |
-| `GET /workbook`, `POST /workbook` | POST accepts `file` and optional `output` and `edits` (JSON). | Preview an XLSX workbook or edit cells in a separate copy. |
+| `GET /workbook`, `POST /workbook` | POST accepts `file` and optional `output` and `edits` (JSON). | Preview a CSV or XLSX spreadsheet or edit cells in a separate copy. |
 | `POST /mkdocs` | `prompt`, repeated `files`, optional `provider_profile`, `system_prompt`, repeated `instruction_files`, `show_hidden=1` | Download a ready-to-serve MkDocs ZIP. |
 | `GET /instructions` | — | Open the workspace instruction editor. |
 | `POST /instructions` | `system_prompt`, newline-separated `instruction_files`, optional `skip_project_instructions=1` | Save workspace guidance. Invalid guidance returns 422. |
@@ -529,7 +531,7 @@ Configure your MCP client to launch the local stdio server. Use the full path to
 | `pipkin_conversations` | `root`, `action` | List, read, or delete saved conversations. |
 | `pipkin_instructions` | `root`, `action` | Lists or manages `AGENTS.md` and discovered skills. |
 | `pipkin_project` | `root`, `action` | Show, set, or initialise the project profile. Set and init require `profile`. |
-| `pipkin_workbook` | `root`, `file` | Preview an XLSX workbook or edit it when `output` and `edits` are supplied. |
+| `pipkin_workbook` | `root`, `file` | Preview a CSV or XLSX spreadsheet or edit it when `output` and `edits` are supplied. |
 | `pipkin_mkdocs` | `root`, `paths`, `prompt` | Generate an MkDocs site and return its ZIP path and any omitted context files. |
 | `pipkin_pack` | `root`, `paths` | Creates a ZIP and returns its path and file count. |
 | `pipkin_submit` | `root`, `paths`, `prompt` | Sends the selection and returns `job` and `result`. Accepts optional `agentic` (boolean), `system_prompt` (string), and `instruction_files` (array of strings). |
@@ -662,8 +664,10 @@ On wide terminals, the file picker shares the screen with Parcel, recent ZIPs, a
 | `r` / `i` | Review deliveries / import an existing input and result ZIP pair |
 | `g` / `G` / `H` | Git history for a path / repository history / toggle hidden files |
 | `f` / `J` / `I` / `m` | Free prompt history / project profile / instructions / provider profile |
-| `W` / `D` / `O` | Work with the highlighted XLSX / export MkDocs / open the latest output folder |
+| `W` / `D` / `O` | Work with the highlighted CSV or XLSX / export MkDocs / open the latest output folder |
 | `?` / `q` | Help / quit |
+
+Press **Enter** or `v` on a highlighted file for a read-only preview of UTF-8 text up to 256 KiB. Use the arrow keys or `j`/`k` to scroll and `q` or Esc to return to the picker. Enter opens directories. Use `W` to work with CSV or XLSX files.
 
 Click **Open output folder** in a terminal that supports OSC 8 file links (some terminals use Ctrl+click). Recent archive and job names also link to their folders. Press uppercase `O` to open the latest successful output in the system file manager, or the configured outputs directory before the first save.
 

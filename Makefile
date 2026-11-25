@@ -3,7 +3,7 @@
 
 APP := pipkin
 EXT_DIR := extension
-VSIX := pipkin-vscodium-0.14.0.vsix
+VSIX := pipkin-vscodium-0.12.0.vsix
 
 all: install install-extension
 
