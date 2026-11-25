@@ -17,6 +17,8 @@ import (
 	"unicode/utf8"
 )
 
+var spreadsheetNumber = regexp.MustCompile(`^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$`)
+
 var csvAddress = regexp.MustCompile(`^([A-Z]{1,3})([1-9][0-9]{0,6})$`)
 
 func readCSV(path string) ([][]string, error) {
@@ -168,6 +170,14 @@ func (a *App) csvTUI(reader *bufio.Reader, input string) {
 		}
 		return
 	}
+	a.spreadsheetGrid(reader, input, "CSV", "", rows)
+}
+
+func (a *App) spreadsheetGrid(reader *bufio.Reader, input, label, sheet string, rows [][]string) {
+	if len(rows) == 0 || len(rows[0]) == 0 {
+		a.status = "The spreadsheet has no cells to edit."
+		return
+	}
 	row, col := 0, 0
 	pending := make(map[string]csvCellEdit)
 	var notice string
@@ -181,7 +191,7 @@ func (a *App) csvTUI(reader *bufio.Reader, input string) {
 		for c := firstCol; c < firstCol+visibleColumns; c++ {
 			header += terminalPad(csvColumnName(c), 16)
 		}
-		lines := []string{" PIPKIN / CSV: " + safeDisplayLine(input), " Arrows move  Enter edit cell  s save copy  q back", " " + safeDisplayLine(notice), header}
+		lines := []string{" PIPKIN / " + safeDisplayLine(label) + ": " + safeDisplayLine(input), " Arrows move  Enter edit cell  s save copy  q back", " " + safeDisplayLine(notice), header}
 		for r := firstRow; r < min(len(rows), firstRow+visibleRows); r++ {
 			line := fmt.Sprintf("%5d  ", r+1)
 			for c := firstCol; c < min(len(rows[r]), firstCol+visibleColumns); c++ {
@@ -197,7 +207,7 @@ func (a *App) csvTUI(reader *bufio.Reader, input string) {
 		switch key := readKey(reader); key {
 		case "q", "esc":
 			if len(pending) != 0 {
-				screenLinesANSI([]string{" Discard unsaved CSV edits? Press Y to discard."})
+				screenLinesANSI([]string{" Discard unsaved cell edits? Press Y to discard."})
 				if readKey(reader) != "Y" {
 					continue
 				}
@@ -221,7 +231,15 @@ func (a *App) csvTUI(reader *bufio.Reader, input string) {
 			address := csvColumnName(col) + strconv.Itoa(row+1)
 			if value, ok := csvEditText(reader, "Edit "+address, rows[row][col]); ok && value != rows[row][col] {
 				data, _ := json.Marshal(value)
-				pending[address] = csvCellEdit{Cell: address, Value: data}
+				edit := csvCellEdit{Sheet: sheet, Cell: address, Value: data}
+				if sheet != "" && strings.HasPrefix(value, "=") {
+					edit.Kind = "formula"
+				} else if sheet != "" && value == "" {
+					edit.Value = json.RawMessage("null")
+				} else if sheet != "" && spreadsheetNumber.MatchString(value) {
+					edit.Value = json.RawMessage(value)
+				}
+				pending[address] = edit
 				rows[row][col] = value
 				notice = fmt.Sprintf("%d unsaved cell edit(s)", len(pending))
 			}
@@ -230,8 +248,10 @@ func (a *App) csvTUI(reader *bufio.Reader, input string) {
 				notice = "No pending edits."
 				continue
 			}
-			suggested := strings.TrimSuffix(input, filepath.Ext(input)) + "-edited.csv"
-			output, ok := csvEditText(reader, "Save a new CSV copy", suggested)
+			ext := filepath.Ext(input)
+			suggested := strings.TrimSuffix(input, ext) + "-edited" + ext
+			title := "Save a new " + strings.ToUpper(strings.TrimPrefix(ext, ".")) + " copy"
+			output, ok := csvEditText(reader, title, suggested)
 			if !ok {
 				continue
 			}

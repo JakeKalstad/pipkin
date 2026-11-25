@@ -10,10 +10,11 @@ try:
     import openpyxl
     from openpyxl.utils.cell import coordinate_to_tuple
 except ImportError:
-    sys.exit("Install openpyxl in the Python environment used by PIPKIN_XLSX_PYTHON.")
+    sys.exit("XLSX needs openpyxl. Run make install-xlsx, or set PIPKIN_XLSX_PYTHON to a Python environment with openpyxl >= 3.1.")
 
 source = sys.argv[1]
-destination = sys.argv[2] if len(sys.argv) > 2 else None
+operation = sys.argv[2] if len(sys.argv) > 2 else None
+destination = operation if operation not in ("--sheets", "--grid") else None
 
 
 def serialise(value):
@@ -55,8 +56,36 @@ try:
             raise ValueError("workbook contains advanced features that cannot be preserved")
     if destination:
         warnings.filterwarnings("error", category=UserWarning, module=r"openpyxl\..*")
-    workbook = openpyxl.load_workbook(source, read_only=not destination, data_only=False, rich_text=True)
-    if not destination:
+    # Older distro builds can read XLSX. Keep rich text preservation mandatory for writes.
+    from inspect import signature
+
+    options = {}
+    if "rich_text" in signature(openpyxl.load_workbook).parameters:
+        options["rich_text"] = True
+    elif destination:
+        raise ValueError("XLSX editing requires openpyxl >= 3.1. Run make install-xlsx.")
+    workbook = openpyxl.load_workbook(source, read_only=not destination, data_only=False, **options)
+    if operation == "--sheets":
+        print(json.dumps(workbook.sheetnames))
+    elif operation == "--grid":
+        sheet = workbook[sys.argv[3]]
+        if not hasattr(sheet, "iter_rows"):
+            raise ValueError("this sheet does not contain an editable cell grid")
+        if not sheet.max_row or not sheet.max_column:
+            sheet.calculate_dimension(force=True)
+        max_row, max_column = max(1, sheet.max_row or 1), max(1, sheet.max_column or 1)
+        if max_row * max_column > 200_000:
+            raise ValueError("worksheet exceeds the 200,000-cell terminal grid limit")
+        rows = []
+        text_size = 0
+        for row in sheet.iter_rows(min_row=1, max_row=max_row, min_col=1, max_col=max_column, values_only=True):
+            values = ["" if cell is None else str(serialise(cell)) for cell in row]
+            text_size += sum(len(value) for value in values)
+            if text_size > 8 * 1024**2:
+                raise ValueError("worksheet text exceeds the terminal grid limit")
+            rows.append(values)
+        print(json.dumps(rows))
+    elif not destination:
         sheets = []
         for sheet in workbook.worksheets[:20]:
             preview = [[preview_value(cell) for cell in row] for row in

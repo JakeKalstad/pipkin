@@ -12,7 +12,7 @@ LISTEN_URL=http://127.0.0.1:8787</pre>
 </section>
 <section class="card" id="usage"><h2>Usage</h2>
 <p>For a text-only answer, open <a href="/prompt">Free prompt</a> or press <kbd>f</kbd> in the TUI. Use the history list to start or return to a conversation. In the TUI, press Enter to open, n for a new conversation, and d then Y to delete. In the composer, Enter adds a line, Ctrl+S sends, Ctrl+T opens the transcript, and Esc returns to history.</p>
-<p>Press Enter or <kbd>v</kbd> on a highlighted text file in the TUI to preview it. Press <kbd>q</kbd> or Esc to return to the picker.</p>
+<p>Press Enter or <kbd>v</kbd> on a highlighted text file in the TUI to preview it. Press <kbd>e</kbd> to edit locally or <kbd>q</kbd> or Esc to return to the picker.</p>
 <ol><li>Select the files and folders the provider should receive.</li><li>Enter the change you want. Use Agentic mode for a draft followed by one or more review passes.</li><li>Review the changes and approve individual files before copying them into the workspace.</li></ol>
 <p>Pipkin uses your root <code>AGENTS.md</code> when customised and shows the built-in default under Instructions when the workspace has no custom project guidance. Open <a href="/instructions">Instructions</a> to edit it, create or enable skills under <code>.agents/skills/&lt;name&gt;/SKILL.md</code>, or add a workspace prompt and explicit Markdown paths. The terminal picker opens the instruction editor with <kbd>I</kbd>. The CLI accepts repeated <code>--instructions path.md</code> flags.</p>
 <pre>pipkin --workflow --agentic --files-from files.json \
@@ -22,7 +22,7 @@ LISTEN_URL=http://127.0.0.1:8787</pre>
 <p>Run <code>pipkin --project-profiles</code> to list the available profiles.</p>
 <ul>{{range .ProjectProfiles}}<li><code>{{.ID}}</code> — {{.Label}}</li>{{end}}</ul>
 <p>Open <a href="/project">Project</a> or press <kbd>J</kbd> to select a profile or initialise a repository. Pipkin writes the choice to <code>.pipkin-project.json</code> and applies the profile guidance to prompts.</p>
-<p>Open <a href="/workbook">Workbook</a> to inspect a CSV or XLSX file or change cells in a separate workbook copy. In the TUI, highlight a spreadsheet and press <kbd>W</kbd>. In a CSV, use the arrow keys to move, Enter to edit, and <kbd>s</kbd> to save a new copy. XLSX support requires <code>openpyxl&gt;=3.1</code> in Python. Set <code>PIPKIN_XLSX_PYTHON</code> to select that interpreter.</p>
+<p>Open <a href="/workbook">Workbook</a> to inspect a CSV or XLSX file or change cells in a separate workbook copy. In the TUI, highlight a spreadsheet and press <kbd>W</kbd>. Choose a tab for XLSX if prompted. Use arrows to move, Enter to edit, and <kbd>s</kbd> to save a new copy. Run <code>make install-xlsx</code> from source or set <code>PIPKIN_XLSX_PYTHON</code> to an interpreter with openpyxl 3.1 or later.</p>
 <pre>pipkin --workbook budget.xlsx --workbook-edits edits.json --workbook-output budget-reviewed.xlsx .</pre></section>
 <section class="card"><h2>MkDocs export</h2>
 <p>Select your source files and enter a documentation brief. Press <kbd>D</kbd> in the TUI or choose <strong>Export MkDocs ZIP</strong> in the web picker. Unzip the result, install its <code>requirements.txt</code>, and run <code>mkdocs serve</code> from the extracted folder.</p>

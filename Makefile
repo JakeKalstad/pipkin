@@ -1,5 +1,5 @@
 
-.PHONY: all build install extension install-extension test test-e2e clean
+.PHONY: all build install extension install-extension install-xlsx test test-e2e clean
 
 APP := pipkin
 EXT_DIR := extension
@@ -28,3 +28,10 @@ test-e2e: build
 
 clean:
 	rm -f $(APP) $(VSIX)
+
+install-xlsx:
+	@set -eu; \
+		config="$${PIPKIN_CONFIG:-$$HOME/.config/pipkin/config.json}"; \
+		venv="$$(dirname "$$config")/xlsx-venv"; \
+		python3 -m venv "$$venv"; \
+		"$$venv/bin/python" -m pip install 'openpyxl>=3.1,<4'

@@ -524,11 +524,14 @@ func showDiffPager(r *bufio.Reader, title string, lines []string, toggle func() 
 	showPager(r, " PIPKIN / DIFF: "+title, lines, toggle, coloredDiff)
 }
 
-func showPager(r *bufio.Reader, title string, lines []string, toggle func() []string, format func(string) string) {
+func showPager(r *bufio.Reader, title string, lines []string, toggle func() []string, format func(string) string, edit ...func()) {
 	scroll := 0
 	hint := " ↑↓ scroll  q back"
 	if toggle != nil {
 		hint = " ↑↓ scroll  v toggle mode  q back"
+	}
+	if len(edit) != 0 {
+		hint = " ↑↓ scroll  e edit  q back"
 	}
 	for {
 		h, w := size()
@@ -545,6 +548,11 @@ func showPager(r *bufio.Reader, title string, lines []string, toggle func() []st
 			scroll = max(0, scroll-1)
 		case "down", "j":
 			scroll = min(max(0, len(lines)-height), scroll+1)
+		case "e":
+			if len(edit) != 0 {
+				edit[0]()
+				return
+			}
 		case "v":
 			if toggle != nil {
 				lines, scroll = toggle(), 0

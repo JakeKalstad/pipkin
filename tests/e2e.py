@@ -328,6 +328,65 @@ class PipkinEndToEnd(unittest.TestCase):
         terminal.send("q")
         self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
 
+    def test_terminal_edits_text_from_preview(self):
+        editor = self.project.parent / "test-editor"
+        editor.write_text('#!/bin/sh\nprintf "Manual edit\\n" > "$1"\n')
+        editor.chmod(0o700)
+        self.env["VISUAL"] = str(editor)
+        terminal = Terminal(self.start)
+        self.addCleanup(terminal.close)
+        terminal.expect("e Edit")
+        terminal.send("v")
+        terminal.expect("PIPKIN / FILE: alpha.txt")
+        terminal.send("e")
+        terminal.expect("Saved alpha.txt")
+        terminal.send("q")
+        self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
+        self.assertEqual((self.project / "alpha.txt").read_text(), "Manual edit\n")
+
+    def test_terminal_edits_xlsx_in_grid(self):
+        import importlib.util
+
+        if importlib.util.find_spec("openpyxl") is None:
+            self.skipTest("openpyxl unavailable")
+        from openpyxl import Workbook, load_workbook
+        from openpyxl.styles import Font
+
+        self.env["PIPKIN_XLSX_PYTHON"] = sys.executable
+        source = self.project / "0.xlsx"
+        book = Workbook()
+        book.active.title = "Cover"
+        data = book.create_sheet("Differences")
+        data["A1"] = "Measure"
+        data["A2"] = "Difference"
+        data["B2"] = 4
+        data["B2"].font = Font(bold=True)
+        data["C2"] = "=B2*2"
+        book.save(source)
+
+        terminal = Terminal(self.start)
+        self.addCleanup(terminal.close)
+        terminal.expect("W Sheet")
+        terminal.send("W")
+        terminal.expect("PIPKIN / XLSX WORKSHEETS")
+        terminal.send("j\r")
+        terminal.expect("PIPKIN / XLSX: Differences")
+        terminal.send("jl\r")
+        terminal.expect("Edit B2")
+        terminal.send("12.0\r")
+        terminal.expect("1 unsaved cell edit")
+        terminal.send("s")
+        terminal.expect("Save a new XLSX copy")
+        terminal.send("\r")
+        terminal.expect("Saved:")
+        terminal.send("q")
+        self.assertEqual(terminal.process.wait(timeout=TIMEOUT), 0)
+        edited = load_workbook(self.project / "0-edited.xlsx")
+        self.assertEqual(edited["Differences"]["B2"].value, 12)
+        self.assertTrue(edited["Differences"]["B2"].font.bold)
+        self.assertEqual(edited["Differences"]["C2"].value, "=B2*2")
+        self.assertEqual(load_workbook(source)["Differences"]["B2"].value, 4)
+
     def test_terminal_edits_csv_in_grid(self):
         source = self.project / "0.csv"
         source.write_text('name,note\nAlice,"hello, world"\n')

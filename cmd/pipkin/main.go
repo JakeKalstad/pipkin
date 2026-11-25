@@ -1399,12 +1399,12 @@ func main() {
 				a.cursor++
 			}
 		case "v":
-			if err := a.previewFile(reader, n); err != nil {
+			if err := a.previewFile(reader, n, restore); err != nil {
 				a.status = safeDisplayLine(err.Error())
 			}
 		case "right", "l", "enter":
 			if key == "enter" && n != nil && !n.dir {
-				if err := a.previewFile(reader, n); err != nil {
+				if err := a.previewFile(reader, n, restore); err != nil {
 					a.status = safeDisplayLine(err.Error())
 				}
 				continue
@@ -1455,11 +1455,20 @@ func main() {
 			if err := openOutputFolder(target); err != nil {
 				a.status = safeDisplayLine(err.Error())
 			}
+		case "e":
+			if n != nil && !n.dir && spreadsheetPath(n.rel) {
+				a.workbookTUI(reader, n.rel)
+				if err := a.rescanTree(a.showHidden); err == nil {
+					root = a.root
+				}
+			} else if err := a.editPickerFile(n, restore); err != nil {
+				a.status = safeDisplayLine(err.Error())
+			}
 		case "W":
 			if n == nil || n.dir {
 				a.status = "Highlight a CSV or XLSX file first."
 			} else {
-				a.workbookTUI(reader, n.rel, restore)
+				a.workbookTUI(reader, n.rel)
 			}
 			if err := a.rescanTree(a.showHidden); err == nil {
 				root = a.root
@@ -1476,6 +1485,7 @@ func main() {
 		case "?":
 			showPager(reader, " PIPKIN / HELP · "+buildMetadata().Version, []string{
 				"Enter/v  Preview the highlighted file. Enter opens directories.",
+				"e      Edit text in your editor or open a spreadsheet grid.",
 				"Space  Toggle selection       s  Select only the highlighted item",
 				"z      Create a ZIP           p  Send a delivery",
 				"P      Draft and review      r  Review saved deliveries",

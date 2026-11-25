@@ -451,7 +451,7 @@ The HTTP interface uses `GET /project` and URL-encoded `POST /project` with `pro
 
 Highlight a CSV and press `W` to open the grid. Use the arrow keys to move, Enter to edit a cell, and `s` to name and save a new CSV. `v` opens the raw text preview. CSV support uses the Go standard library. Web, CLI, and MCP use the same cell-edit format as XLSX, except `sheet` is optional (use `CSV` if supplied). CSV edits work on existing cells and use scalar values only.
 
-For XLSX, install `openpyxl>=3.1` in a Python environment and set `PIPKIN_XLSX_PYTHON` to that environment's Python if needed. **Workbook** in the web UI previews sheet names, dimensions, and the first 20 rows and 12 columns of up to 20 sheets. To edit, supply a JSON array of cells and a new output path. Pipkin returns the before-and-after values and writes a separate copy. The source stays intact.
+For XLSX, run `make install-xlsx` from the Pipkin source directory. This installs openpyxl in the `xlsx-venv` folder beside Pipkin's config. You can also set `PIPKIN_XLSX_PYTHON` to your own interpreter with openpyxl 3.1 or later. **Workbook** in the web UI previews sheet names, dimensions, and the first 20 rows and 12 columns of up to 20 sheets. To edit, supply a JSON array of cells and a new output path. Pipkin returns the before-and-after values and writes a separate copy. The source stays intact.
 
 ```json
 [
@@ -467,7 +467,7 @@ pipkin --workbook budget.xlsx --workbook-edits edits.json --workbook-output budg
 
 Use `null` to clear a cell. Strings are literal unless you specify `kind: "formula"`. Formula expressions are saved for the spreadsheet application to calculate. The editor is for cell values and formulas in existing sheets. Advanced workbook features may be rejected if the library cannot preserve them.
 
-Use `GET /workbook` for the form and `POST /workbook` with `file` and optional `output` and `edits` (JSON) plus the form's CSRF token. MCP exposes the same operation as `pipkin_workbook(root, file, output?, edits?)`, with edits given as an array. In the TUI, highlight an XLSX workbook and press `W`. Press Enter to preview or `e` to enter an output path and a JSON cell edit list in your terminal editor.
+Use `GET /workbook` for the form and `POST /workbook` with `file` and optional `output` and `edits` (JSON) plus the form's CSRF token. MCP exposes the same operation as `pipkin_workbook(root, file, output?, edits?)`, with edits given as an array. In the TUI, highlight an XLSX workbook and press `W` or `e`. Choose a worksheet if prompted. Use the arrows to move, Enter to edit, and `s` to save a separate XLSX copy. The grid supports up to 200,000 cells per worksheet. Entries such as `12.5` become numbers, entries beginning with `=` become formulas, and an empty entry clears the cell.
 
 ### Export an MkDocs site
 
@@ -667,7 +667,7 @@ On wide terminals, the file picker shares the screen with Parcel, recent ZIPs, a
 | `W` / `D` / `O` | Work with the highlighted CSV or XLSX / export MkDocs / open the latest output folder |
 | `?` / `q` | Help / quit |
 
-Press **Enter** or `v` on a highlighted file for a read-only preview of UTF-8 text up to 256 KiB. Use the arrow keys or `j`/`k` to scroll and `q` or Esc to return to the picker. Enter opens directories. Use `W` to work with CSV or XLSX files.
+Press **Enter** or `v` on a highlighted file for a read-only preview of UTF-8 text up to 256 KiB. Use the arrow keys or `j`/`k` to scroll and `q` or Esc to return to the picker. Enter opens directories. Press `e` in the picker or text preview to open a file in `VISUAL`, `EDITOR`, or `vi`. Saving applies the edit locally. Press `W` or `e` on a spreadsheet to open its grid and save a separate copy.
 
 Click **Open output folder** in a terminal that supports OSC 8 file links (some terminals use Ctrl+click). Recent archive and job names also link to their folders. Press uppercase `O` to open the latest successful output in the system file manager, or the configured outputs directory before the first save.
 
